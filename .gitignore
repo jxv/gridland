@@ -1,4 +1,6 @@
 .*
+*.o
+*.hi
 *~
 dist/
 cabal.sandbox.config
