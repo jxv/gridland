@@ -39,7 +39,10 @@ data Color
     | White
     deriving (Enum, Eq, Bounded, Show)
 
-data Input = Input
+data Input
+    = Quit
+    | Input
+    deriving (Eq, Show)
 
 data Sprite = Sprite {
     spriteFrames :: V.Vector SDL.Surface -- (1 + Tinted-N-Fully * Colors) * Rotations
@@ -92,7 +95,7 @@ type Step = ([Input], GfxMachine, SfxMachine, MusicMachine) -> MasterMachine Boo
 step :: Step
 step (inputs, gfxMach, sfxMach, musMach) = do
     draw (gfxMach, [])
-    return False
+    return True
 
 execute :: (Int, Int, Int, Step) -> IO ()
 execute (w, h, tileSize, step) = do
@@ -112,7 +115,8 @@ getInputs = do
     events <- pollEvents
     return $ foldr cvt [] events
  where
-    cvt _ _ = [Input]
+    cvt SDL.Quit inputs = Quit : inputs
+    cvt _ inputs = inputs
 
 loopMachine :: (GfxMachine, SfxMachine, MusicMachine, Step) -> MasterMachine ()
 loopMachine args@(gfxMach, sfxMach, musMach, step) = do
@@ -122,7 +126,7 @@ loopMachine args@(gfxMach, sfxMach, musMach, step) = do
     endTick <- SDL.getTicks
     let diff = endTick - startTick
     when (diff < 16) (SDL.delay $ 16 - diff)
-    when continue (loopMachine args)
+    when (continue || elem Quit inputs) (loopMachine args)
 
 colorValue :: Integral a => Color -> (a, a, a)
 colorValue = \case
@@ -169,11 +173,10 @@ spriteGfx (Sprite{..}, cf, loc, theta) = let
     sur = spriteFrames V.! offset
     in Gfx sur loc
 
-
 gfxRect :: Int -> Location -> SDL.Rect
 gfxRect ts Location{..} = SDL.Rect (ts * locX) (ts * locY) (ts * (locX + 1)) (ts * (locY + 1)) 
 
-draw :: (GfxMachine, [Gfx]) -> IO ()
+draw :: (GfxMachine, [Gfx]) -> MasterMachine ()
 draw (GfxMachine{..}, gfxs) = do
     let format = SDL.surfaceGetPixelFormat gmScreen
     white <- colorValue' White $ SDL.mapRGB format
@@ -182,11 +185,11 @@ draw (GfxMachine{..}, gfxs) = do
     mapM_ drw gfxs
     SDL.flip gmScreen
 
-playSfx :: (SfxMachine, [Sfx]) -> IO ()
+playSfx :: (SfxMachine, [Sfx]) -> MasterMachine ()
 playSfx (mach, sfxs) = do
     return ()
 
-playMusic :: (MusicMachine,  [Music]) -> IO ()
+playMusic :: (MusicMachine,  [Music]) -> MasterMachine ()
 playMusic (mach, musics) = do
     return ()
 
