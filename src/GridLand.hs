@@ -1,19 +1,32 @@
 module GridLand
     ( Config(..)
-    , test
     , Color(..)
     , Stretch(..)
     , ColorFilter(..)
     , Angle(..)
+    , Backdrop(..)
+    , BackdropImage
     , Sprite
     , Sfx
     , Music
     , GridLand
     , loadSprite
     , loadSpriteStretch
+    , loadBackdropImage
+    , loadBackdropImageStretch
+    , drawSpriteFront
+    , drawSpriteMiddle
+    , drawSpriteBack
     , print'
     , putStrLn'
     , runGridLand
+    , backdrop
+    , mkConfig
+    , mkLocation
+    , getData
+    , putData
+    , modifyData
+    , io
     ) where
 
 import Debug.Trace
@@ -51,7 +64,7 @@ data Config = Config {
     cfgTileSize :: Int
 }
 
-data GridLandConfig = GridLandConfig {
+data Foundation = Foundation {
     screen :: SDL.Surface,
     colorMap :: Color -> SDL.Pixel,
     rows :: Int,
@@ -119,7 +132,7 @@ newtype Sfx = Sfx { sfxKey :: Int }
 newtype Music = Music { musicKey :: Int }
     deriving (Eq, Num, Ord, Show)
 
-data GridLandCommon = GridLandCommon {
+data Common = Common {
     bkdImages :: Map BackdropImage SDL.Surface,
     sprites :: Map Sprite (V.Vector SDL.Surface),
     sfxs :: Map Sfx Mixer.Chunk,
@@ -128,39 +141,39 @@ data GridLandCommon = GridLandCommon {
     musicPlaying :: Maybe Music
 }
 
-newtype GridLand a b = GridLand { unGridLand :: RWS.RWST GridLandConfig () (GridLandCommon, a) IO b }
-    deriving
-        (Functor, Applicative, Monad, MonadIO, RWS.MonadRWS GridLandConfig () (GridLandCommon, a)
-        ,MonadReader GridLandConfig, MonadWriter (), MonadState (GridLandCommon, a))
-    
-test :: IO ()
-test = runGridLand (myCfg, myStart, myUpdate, myEnd)
+data Todo = Todo {
+    todoFrontSprites :: Map (Int, Int) Gfx,
+    todoMiddleSprites :: Map (Int, Int) Gfx,
+    todoBackSprites :: Map (Int, Int) Gfx,
+    todoBackdrop :: Backdrop
+}
 
+instance Monoid Backdrop where
+    mempty = BkdColor White
+    mappend _ a = a
+
+instance Monoid Todo where
+    mempty = Todo mempty mempty mempty mempty
+    mappend a b = Todo { 
+            todoFrontSprites = mappend (todoFrontSprites a) (todoFrontSprites b),
+            todoMiddleSprites = mappend (todoMiddleSprites a) (todoMiddleSprites b),
+            todoBackSprites = mappend (todoBackSprites a) (todoBackSprites b),
+            todoBackdrop = mappend (todoBackdrop a) (todoBackdrop b)
+        }
+
+newtype GridLand a b = GridLand { unGridLand :: RWS.RWST Foundation Todo(Common, a) IO b }
+    deriving
+        (Functor, Applicative, Monad, MonadIO, RWS.MonadRWS Foundation Todo (Common, a)
+        ,MonadReader Foundation, MonadWriter Todo, MonadState (Common, a))
+ 
 mkConfig :: (Int, Int, Int) -> Config
 mkConfig = uncurryN Config
-
-myCfg = mkConfig(10, 10, 64)
 
 mkLocation :: (Int, Int) -> Location
 mkLocation (x,y) = Location { locX = x, locY = y }
 
-myStart = do
-    bkgImg <- loadBackdropImageStretch("data/image.bmp", Pixelated)
-    backdrop bkgImg
-    backdrop $ BkdColor(Red)
-    colorSprite <- loadSprite("data/image.bmp")
-    return(colorSprite, 0)
-
-myUpdate = do
-    (colorSprite, n) <- getData
-    drawBackdrop
-    drawSprite(colorSprite, Tint Blue, mkLocation(1,2), Degrees n)
-    drawSprite(colorSprite, NoFilter, mkLocation(6,7), Degrees (n * 2))
-    putData (colorSprite, n + 1)
-    return(True)
-
-myEnd = do
-    return ()
+mkTodo :: Todo
+mkTodo = Todo Map.empty Map.empty Map.empty (BkdColor White)
 
 getData :: GridLand a a
 getData = RWS.gets snd
@@ -252,7 +265,7 @@ colorValue' :: Integral a => Color -> (a -> a -> a -> b) -> b
 colorValue' c f = uncurryN f (colorValue c)
 
 rotations, colors, withoutColors, withColors, totalFrames, colorAngleInterval:: Int
-rotations = 8 -- 36
+rotations = 8 -- 36 
 colors = 1 + fromEnum (maxBound :: Color)
 withColors = 2
 withoutColors = 1
@@ -287,13 +300,19 @@ gfxRect ts Location{..} sur = let
     in SDL.Rect (ts * locX) (ts * locY) ts ts
 
 drawSpriteFront :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
-drawSpriteFront (sprite, cf, loc, theta) = return ()
+drawSpriteFront (sprite, cf, loc, theta) = do
+    gfx <- spriteGfx sprite cf loc theta
+    RWS.tell $ mempty { todoFrontSprites = Map.singleton (locX loc, locY loc) gfx }
 
 drawSpriteMiddle :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
-drawSpriteMiddle (sprite, cf, loc, theta) = return ()
+drawSpriteMiddle (sprite, cf, loc, theta) = do
+    gfx <- spriteGfx sprite cf loc theta
+    RWS.tell $ mempty { todoMiddleSprites = Map.singleton (locX loc, locY loc) gfx }
 
 drawSpriteBack :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
-drawSpriteBack (sprite, cf, loc, theta) = return ()
+drawSpriteBack (sprite, cf, loc, theta) = do
+    gfx <- spriteGfx sprite cf loc theta
+    RWS.tell $ mempty { todoBackSprites = Map.singleton (locX loc, locY loc) gfx }
 
 drawSprite :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
 drawSprite (sprite, cf, loc, theta) = do
@@ -302,6 +321,12 @@ drawSprite (sprite, cf, loc, theta) = do
     let (w, h) = (SDL.surfaceGetWidth gfxSurface, SDL.surfaceGetHeight gfxSurface)
     let tileRect = Just $ SDL.Rect ((w - ts) `div` 2) ((h - ts) `div` 2) ts ts
     void . liftIO $ SDL.blitSurface gfxSurface tileRect s (Just $ gfxRect ts gfxLocation gfxSurface)
+ 
+drawGfx :: SDL.Surface -> Int -> Gfx -> IO ()
+drawGfx scr ts Gfx{..} = do
+    let (w, h) = (SDL.surfaceGetWidth gfxSurface, SDL.surfaceGetHeight gfxSurface)
+    let tileRect = Just $ SDL.Rect ((w - ts) `div` 2) ((h - ts) `div` 2) ts ts
+    void $ SDL.blitSurface gfxSurface tileRect scr (Just $ gfxRect ts gfxLocation gfxSurface)
 
 stopMusic :: Music -> GridLand a ()
 stopMusic Music{..} = do
@@ -316,33 +341,37 @@ stopAllMusic = liftIO Mixer.haltMusic
 -- | (Config, Start, Update, End) -> IO ()
 runGridLand :: (Config, GridLand () a, GridLand a Bool, GridLand a ()) -> IO ()
 runGridLand (cfg, onStart, onUpdate, onEnd) = do
-    glCfg <- start cfg
-    let glCom = mkGridLandCommon
-    (initUserData, (initCommon,_), _) <- RWS.runRWST (unGridLand onStart) glCfg (glCom, ())
+    foundation <- start cfg
+    let common = mkCommon
+    (initUserData, (initCommon,_), _) <- RWS.runRWST (unGridLand onStart) foundation (common, ())
     let initState = (initCommon, initUserData)
-    let update = onUpdate
+    let update = onUpdate >> drawBackdrop
+    let dgfx = drawGfx (screen foundation) (tileSize foundation)
     endState <- ($ initState) $ fix $ \loop state -> do
         startTick <- SDL.getTicks
         inputs <- getInputs
-        (continue, state', output) <- RWS.runRWST (unGridLand update) glCfg state
-        liftIO $ SDL.flip (screen glCfg)
+        (continue, state', todo) <- RWS.runRWST (unGridLand update) foundation state
+        mapM_ dgfx (Map.elems $ todoBackSprites todo)
+        mapM_ dgfx (Map.elems $ todoMiddleSprites todo)
+        mapM_ dgfx (Map.elems $ todoFrontSprites todo)
+        liftIO $ SDL.flip (screen foundation)
         endTick <- SDL.getTicks
         let diff = endTick - startTick
         when (diff < 16) (SDL.delay $ 16 - diff)
         if elem Quit inputs
             then return state'
             else loop state'
-    void $ RWS.execRWST (unGridLand onEnd) glCfg endState
-    end glCfg glCom
+    void $ RWS.execRWST (unGridLand onEnd) foundation endState
+    end foundation common
 
-start :: Config -> IO GridLandConfig
+start :: Config -> IO Foundation
 start Config{..} = do
     SDL.init [SDL.InitEverything]
     screen <- SDL.setVideoMode (cfgCols * cfgTileSize) (cfgRows * cfgTileSize) 16 [SDL.SWSurface]
     SDL.setCaption "Grid Land" ""
     SDL.enableUnicode True
     colorMap <- getColorMap screen
-    return $ GridLandConfig screen colorMap cfgRows cfgCols cfgTileSize
+    return $ Foundation screen colorMap cfgRows cfgCols cfgTileSize
 
 getColorMap :: SDL.Surface -> IO (Color -> SDL.Pixel)
 getColorMap s = do
@@ -351,11 +380,11 @@ getColorMap s = do
     let table = V.fromList pixels
     return $ \c -> table V.! (fromEnum c)
 
-mkGridLandCommon :: GridLandCommon
-mkGridLandCommon = GridLandCommon Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing
+mkCommon :: Common
+mkCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing
 
-end :: GridLandConfig -> GridLandCommon -> IO ()
-end GridLandConfig{..} GridLandCommon{..} = do
+end :: Foundation -> Common -> IO ()
+end Foundation{..} Common{..} = do
     mapM_ SDL.freeSurface (Map.elems bkdImages)
     mapM_ (mapM_ SDL.freeSurface . V.toList) (Map.elems sprites)
     mapM_ Mixer.freeMusic (Map.elems musics)
@@ -384,3 +413,6 @@ drawBackdrop = do
         BkdImage bi -> do
             img <- RWS.gets ((Map.! bi) . bkdImages . fst)
             void . liftIO $ SDL.blitSurface img Nothing s Nothing
+
+io :: IO b -> GridLand a b
+io = liftIO
