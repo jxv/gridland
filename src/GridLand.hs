@@ -17,6 +17,10 @@ module GridLand
     , drawSpriteFront
     , drawSpriteMiddle
     , drawSpriteBack
+    , loadMusic
+    , playMusic
+    , stopMusic
+    , stopAllMusic
     , print'
     , putStrLn'
     , runGridLand
@@ -26,6 +30,7 @@ module GridLand
     , getData
     , putData
     , modifyData
+    , getPlayingMusic
     , io
     ) where
 
@@ -138,7 +143,7 @@ data Common = Common {
     sfxs :: Map Sfx Mixer.Chunk,
     musics :: Map Music Mixer.Music,
     currBkd :: Backdrop,
-    musicPlaying :: Maybe Music
+    playingMusic :: Maybe Music
 }
 
 data Todo = Todo {
@@ -328,15 +333,43 @@ drawGfx scr ts Gfx{..} = do
     let tileRect = Just $ SDL.Rect ((w - ts) `div` 2) ((h - ts) `div` 2) ts ts
     void $ SDL.blitSurface gfxSurface tileRect scr (Just $ gfxRect ts gfxLocation gfxSurface)
 
+loadMusic :: (FilePath) -> GridLand a Music
+loadMusic (path) = do
+    mus <- liftIO $ Mixer.loadMUS path
+    key <- RWS.gets (Map.size . musics . fst)
+    let music = Music key
+    RWS.modify . first $ \s -> s { musics = Map.insert music mus (musics s) }
+    return music
+
+playMusic :: (Music, Maybe Int) -> GridLand a ()
+playMusic (music, mloops) = do
+    mus <- RWS.gets ((Map.! music) . musics . fst)
+    let loops = maybe (-1) (\n -> if n < -1 then 0 else n) mloops
+    liftIO $ Mixer.playMusic mus loops
+    RWS.modify . first $  (\s -> s { playingMusic = Just music } )
+
 stopMusic :: Music -> GridLand a ()
-stopMusic Music{..} = do
-    mplaying <- RWS.gets (musicPlaying . fst)
+stopMusic music = do
+    mplaying <- RWS.gets (playingMusic . fst)
     case mplaying of
         Nothing -> return ()
-        Just (Music key) -> when (musicKey == key) $ liftIO Mixer.haltMusic
+        Just currMusic -> do
+            when (music == currMusic) $ do
+                liftIO Mixer.haltMusic
+                RWS.modify . first $ (\s -> s { playingMusic = Nothing } )
     
 stopAllMusic :: GridLand a ()
-stopAllMusic = liftIO Mixer.haltMusic
+stopAllMusic = do
+    liftIO Mixer.haltMusic
+    RWS.modify . first $ (\s -> s { playingMusic = Nothing } )
+
+getPlayingMusic :: GridLand a (Maybe Music)
+getPlayingMusic = RWS.gets (playingMusic . fst)
+
+establishPlayingMusic :: GridLand a ()
+establishPlayingMusic = do
+    isPlaying <- liftIO Mixer.playingMusic
+    unless isPlaying $ RWS.modify . first $ (\s -> s { playingMusic = Nothing } )
 
 -- | (Config, Start, Update, End) -> IO ()
 runGridLand :: (Config, GridLand () a, GridLand a Bool, GridLand a ()) -> IO ()
@@ -345,7 +378,7 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
     let common = mkCommon
     (initUserData, (initCommon,_), _) <- RWS.runRWST (unGridLand onStart) foundation (common, ())
     let initState = (initCommon, initUserData)
-    let update = onUpdate >> drawBackdrop
+    let update = establishPlayingMusic >> onUpdate >> drawBackdrop
     let dgfx = drawGfx (screen foundation) (tileSize foundation)
     endState <- ($ initState) $ fix $ \loop state -> do
         startTick <- SDL.getTicks
@@ -371,6 +404,8 @@ start Config{..} = do
     SDL.setCaption "Grid Land" ""
     SDL.enableUnicode True
     colorMap <- getColorMap screen
+    ttfOk <- TTF.init
+    Mixer.openAudio 22050 Mixer.AudioS16Sys 2 4096
     return $ Foundation screen colorMap cfgRows cfgCols cfgTileSize
 
 getColorMap :: SDL.Surface -> IO (Color -> SDL.Pixel)
@@ -390,6 +425,8 @@ end Foundation{..} Common{..} = do
     mapM_ Mixer.freeMusic (Map.elems musics)
     mapM_ (const $ return ()) (Map.elems sfxs) -- Mixer.freeChunks is missing a binding
     SDL.freeSurface screen
+    Mixer.closeAudio
+    TTF.quit
     SDL.quit
 
 putStrLn' :: String -> GridLand a ()
