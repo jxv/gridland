@@ -1,6 +1,22 @@
 module GridLand
-    ( test
+    ( Config(..)
+    , test
+    , Color(..)
+    , Stretch(..)
+    , ColorFilter(..)
+    , Angle(..)
+    , Sprite
+    , Sfx
+    , Music
+    , GridLand
+    , loadSprite
+    , loadSpriteStretch
+    , print'
+    , putStrLn'
+    , runGridLand
     ) where
+
+import Debug.Trace
 
 import Import
 -- SDL
@@ -23,8 +39,29 @@ import qualified Data.Set as Set
 import qualified Math.Geometry.Grid as Grid
 -- vector
 import qualified Data.Vector as V
+-- mtl
+import qualified Control.Monad.State as State
+import qualified Control.Monad.RWS as RWS
 
 import Data.IORef
+
+data Config = Config {
+    cfgRows :: Int,
+    cfgCols :: Int,
+    cfgTileSize :: Int
+}
+
+data GridLandConfig = GridLandConfig {
+    screen :: SDL.Surface,
+    colorMap :: Color -> SDL.Pixel,
+    rows :: Int,
+    cols :: Int,
+    tileSize :: Int
+}
+
+data Background
+    = BkgColor Color
+    | BkgImage SDL.Surface
 
 data Color
     = Red
@@ -45,17 +82,19 @@ data Input
     deriving (Eq, Show)
 
 data Sprite = Sprite {
-    spriteFrames :: V.Vector SDL.Surface -- (1 + Tinted-N-Fully * Colors) * Rotations
+    spriteFrames :: V.Vector SDL.Surface -- (1 + Tinted-N-Replace * Colors) * Rotations
 }
-
-class ToSprite a where
-    makeSprite :: (GfxMachine, a) -> Sprite
 
 data ColorFilter
     = NoFilter
     | Tint Color
     | Replace Color
     deriving (Eq, Show)
+
+data Stretch
+    = Smooth
+    | Pixelated
+    deriving (Eq, Enum, Bounded, Show)
 
 data Angle
     = Radians Float
@@ -72,36 +111,86 @@ data Gfx = Gfx {
     gfxLocation :: Location
 }
 
-type Sfx = Int
-type Music = Int
+newtype Sfx = Sfx { sfxKey :: Int }
 
-data GfxMachine = GfxMachine {
-    gmGridSize :: (Int, Int),
-    gmTileSize :: Int,
-    gmScreen :: SDL.Surface
+newtype Music = Music { musicKey :: Int }
+
+data GridLandCommon = GridLandCommon {
+    bkg :: Background,
+    sprites :: Map Int (V.Vector SDL.Surface),
+    sfxs :: Map Int Mixer.Chunk,
+    musics :: Map Int Mixer.Music,
+    musicPlaying :: Maybe Music
 }
 
-data SfxMachine = SfxMachine
-
-data MusicMachine = MusicMachine
-
-type MasterMachine = IO
-
+newtype GridLand a b = GridLand { unGridLand :: RWS.RWST GridLandConfig () (GridLandCommon, a) IO b }
+    deriving
+        (Functor, Applicative, Monad, MonadIO, RWS.MonadRWS GridLandConfig () (GridLandCommon, a),
+        MonadReader GridLandConfig, MonadWriter (), MonadState (GridLandCommon, a))
+    
 test :: IO ()
-test = execute (8, 8, 64, step)
+test = runGridLand (myCfg, myStart, myUpdate, myEnd)
 
-type Step = ([Input], GfxMachine, SfxMachine, MusicMachine) -> MasterMachine Bool
+mkConfig :: (Int, Int, Int) -> Config
+mkConfig = uncurryN Config
 
-step :: Step
-step (inputs, gfxMach, sfxMach, musMach) = do
-    draw (gfxMach, [])
-    return True
+myCfg = mkConfig(10, 10, 64)
 
-execute :: (Int, Int, Int, Step) -> IO ()
-execute (w, h, tileSize, step) = do
-    (gfxMach, sfxMach, musMach) <- start (w, h, tileSize)
-    loopMachine (gfxMach, sfxMach, musMach, step)
-    end (gfxMach, sfxMach, musMach)
+mkLocation :: (Int, Int) -> Location
+mkLocation (x,y) = Location { locX = x, locY = y }
+
+myStart = do
+    background $ BkgColor(Red)
+    colorSprite <- loadSprite("data/image.bmp")
+    return(colorSprite, 0)
+
+myUpdate = do
+    (colorSprite, n) <- getData
+    drawBackground
+    drawSpriteFront(colorSprite, Tint Blue, mkLocation(1,2), Degrees n)
+    drawSpriteFront(colorSprite, NoFilter, mkLocation(6,7), Degrees (n * 2))
+    putData (colorSprite, n + 1)
+    return(True)
+
+myEnd = do
+    return ()
+
+getData :: GridLand a a
+getData = RWS.gets snd
+
+putData :: a -> GridLand a ()
+putData a = RWS.modify . second $ const a
+
+modifyData :: (a -> a) -> GridLand a ()
+modifyData f = RWS.modify . second $ f
+
+spriteDegrees :: [Int]
+spriteDegrees = [ rot * 360 `div` rotations | rot <- [0 .. (rotations - 1)]]
+
+spriteOpts :: [(ColorFilter, Int)]
+spriteOpts = noFilters ++ filters
+ where
+    noFilters = [(NoFilter, theta) | theta <- spriteDegrees]
+    filters = [(cf c, theta) | cf <- [Tint, Replace], c <- [minBound..maxBound], theta <-  spriteDegrees]
+
+loadSpriteStretch :: (FilePath, Stretch) -> GridLand a Sprite
+loadSpriteStretch (path, stretch) = do
+    base <- liftIO $ Image.load path
+    let (w,h) = (SDL.surfaceGetWidth base, SDL.surfaceGetHeight base)
+    let side = max w h 
+    ts <- RWS.asks tileSize
+    let zoom = (fromIntegral ts) / (fromIntegral side)
+    let drw (_, theta) = do
+            Gfx.rotozoom base (fromIntegral theta) zoom (stretch == Smooth)
+    frames <- liftIO $ mapM drw spriteOpts
+    liftIO $ SDL.freeSurface base
+    return $ Sprite $ V.fromListN totalFrames frames
+
+loadSprite :: (FilePath) -> GridLand a Sprite
+loadSprite (path) = loadSpriteStretch (path, Smooth)
+
+copySurface :: SDL.Surface -> IO SDL.Surface
+copySurface = SDL.displayFormat
 
 pollEvents :: IO [SDL.Event]
 pollEvents = do
@@ -117,16 +206,6 @@ getInputs = do
  where
     cvt SDL.Quit inputs = Quit : inputs
     cvt _ inputs = inputs
-
-loopMachine :: (GfxMachine, SfxMachine, MusicMachine, Step) -> MasterMachine ()
-loopMachine args@(gfxMach, sfxMach, musMach, step) = do
-    startTick <- SDL.getTicks
-    inputs <- getInputs
-    continue <- step (inputs, gfxMach, sfxMach, musMach)
-    endTick <- SDL.getTicks
-    let diff = endTick - startTick
-    when (diff < 16) (SDL.delay $ 16 - diff)
-    when (continue || elem Quit inputs) (loopMachine args)
 
 colorValue :: Integral a => Color -> (a, a, a)
 colorValue = \case
@@ -145,12 +224,15 @@ colorValue' :: Integral a => Color -> (a -> a -> a -> b) -> b
 colorValue' c f = uncurryN f (colorValue c)
 
 rotations, colors, withoutColors, withColors, totalFrames, colorAngleInterval:: Int
-rotations = 30
+rotations = 36
 colors = 1 + fromEnum (maxBound :: Color)
 withColors = 2
 withoutColors = 1
 totalFrames = (withoutColors + withColors * colors) * rotations
 colorAngleInterval = colors * rotations
+
+colorAngleOffset :: Color -> Angle -> Int
+colorAngleOffset c t = colorOffset c + angleOffset t
 
 angleOffset :: Angle -> Int
 angleOffset (Radians r) = angleOffset $ Degrees (round $ 180 * r / pi)
@@ -159,52 +241,108 @@ angleOffset (Degrees d) = ((d `mod` 360) * rotations `div` 360)
 colorOffset :: Color -> Int
 colorOffset c = fromEnum c * rotations
 
-colorAngleOffset :: Color -> Angle -> Int
-colorAngleOffset c t = colorOffset c + angleOffset t
-
 frameOffset :: ColorFilter -> Angle -> Int
 frameOffset NoFilter theta = angleOffset theta
 frameOffset (Tint c) theta = rotations + colorAngleOffset c theta
 frameOffset (Replace c) theta = rotations + colorAngleInterval + colorAngleOffset c theta
 
-spriteGfx :: (Sprite, ColorFilter, Location, Angle) -> Gfx
-spriteGfx (Sprite{..}, cf, loc, theta) = let
+spriteGfx :: Sprite -> ColorFilter -> Location -> Angle -> Gfx
+spriteGfx Sprite{..} cf loc theta = let
     offset = frameOffset cf theta
     sur = spriteFrames V.! offset
     in Gfx sur loc
 
-gfxRect :: Int -> Location -> SDL.Rect
-gfxRect ts Location{..} = SDL.Rect (ts * locX) (ts * locY) (ts * (locX + 1)) (ts * (locY + 1)) 
+gfxRect :: Int -> Location -> SDL.Surface -> SDL.Rect
+gfxRect ts Location{..} sur = let
+    (w, h) = (SDL.surfaceGetWidth sur, SDL.surfaceGetHeight sur)
+    in SDL.Rect (ts * locX) (ts * locY) ts ts
 
-draw :: (GfxMachine, [Gfx]) -> MasterMachine ()
-draw (GfxMachine{..}, gfxs) = do
-    let format = SDL.surfaceGetPixelFormat gmScreen
-    white <- colorValue' White $ SDL.mapRGB format
-    void $ SDL.fillRect gmScreen Nothing white
-    let drw Gfx{..} = SDL.blitSurface gfxSurface (Just $ gfxRect gmTileSize gfxLocation) gmScreen Nothing
-    mapM_ drw gfxs
-    SDL.flip gmScreen
+drawSpriteFront :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
+drawSpriteFront (sprite, cf, loc, theta) = do
+    (s, ts) <- RWS.asks (screen &&& tileSize)
+    let Gfx{..} = spriteGfx sprite cf loc theta
+    let (w, h) = (SDL.surfaceGetWidth gfxSurface, SDL.surfaceGetHeight gfxSurface)
+    let tileRect = Just $ SDL.Rect ((w - ts) `div` 2) ((h - ts) `div` 2) ts ts
+    void . liftIO $ SDL.blitSurface gfxSurface tileRect s (Just $ gfxRect ts gfxLocation gfxSurface)
 
-playSfx :: (SfxMachine, [Sfx]) -> MasterMachine ()
-playSfx (mach, sfxs) = do
-    return ()
+drawSpriteMiddle :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
+drawSpriteMiddle (sprite, cf, loc, theta) = do
+    (s, ts) <- RWS.asks (screen &&& tileSize)
+    let Gfx{..} = spriteGfx sprite cf loc theta
+    void . liftIO $ SDL.blitSurface gfxSurface Nothing s (Just $ gfxRect ts gfxLocation gfxSurface)
 
-playMusic :: (MusicMachine,  [Music]) -> MasterMachine ()
-playMusic (mach, musics) = do
-    return ()
+stopMusic :: Music -> GridLand a ()
+stopMusic Music{..} = do
+    mplaying <- RWS.gets (musicPlaying . fst)
+    case mplaying of
+        Nothing -> return ()
+        Just (Music key) -> when (musicKey == key) $ liftIO Mixer.haltMusic
+    
+stopAllMusic :: GridLand a ()
+stopAllMusic = liftIO Mixer.haltMusic
 
-start :: (Int, Int, Int) -> IO (GfxMachine, SfxMachine, MusicMachine)
-start (w, h, tileSize) = do
+-- | (Config, Start, Update, End) -> IO ()
+runGridLand :: (Config, GridLand () a, GridLand a Bool, GridLand a ()) -> IO ()
+runGridLand (cfg, onStart, onUpdate, onEnd) = do
+    glCfg <- start cfg
+    let glCom = mkGridLandCommon
+    (initUserData, (initCommon,_), _) <- RWS.runRWST (unGridLand onStart) glCfg (glCom, ())
+    let initState = (initCommon, initUserData)
+    let update = onUpdate
+    endState <- ($ initState) $ fix $ \loop state -> do
+        startTick <- SDL.getTicks
+        inputs <- getInputs
+        (continue, state', output) <- RWS.runRWST (unGridLand update) glCfg state
+        liftIO $ SDL.flip (screen glCfg)
+        endTick <- SDL.getTicks
+        let diff = endTick - startTick
+        when (diff < 16) (SDL.delay $ 16 - diff)
+        if elem Quit inputs
+            then return state'
+            else loop state'
+    void $ RWS.execRWST (unGridLand onEnd) glCfg endState
+    end glCfg glCom
+
+start :: Config -> IO GridLandConfig
+start Config{..} = do
     SDL.init [SDL.InitEverything]
-    screen <- SDL.setVideoMode (w * tileSize) (h * tileSize) 16 [SDL.SWSurface]
+    screen <- SDL.setVideoMode (cfgCols * cfgTileSize) (cfgRows * cfgTileSize) 16 [SDL.SWSurface]
     SDL.setCaption "Grid Land" ""
     SDL.enableUnicode True
-    let gm = GfxMachine (w,h) tileSize screen
-    let sm = SfxMachine
-    let mm = MusicMachine
-    return (gm, sm, mm)
+    colorMap <- getColorMap screen
+    return $ GridLandConfig screen colorMap cfgRows cfgCols cfgTileSize
 
-end :: (GfxMachine, SfxMachine, MusicMachine) -> IO ()
-end (GfxMachine{..}, SfxMachine, MusicMachine) = do
-    SDL.freeSurface gmScreen
+getColorMap :: SDL.Surface -> IO (Color -> SDL.Pixel)
+getColorMap s = do
+    let fmt = SDL.surfaceGetPixelFormat s
+    pixels <- forM [minBound..maxBound] $ \c -> liftIO $ colorValue' c (SDL.mapRGB fmt)
+    let table = V.fromList pixels
+    return $ \c -> table V.! (fromEnum c)
+
+mkGridLandCommon :: GridLandCommon
+mkGridLandCommon = GridLandCommon (BkgColor White) Map.empty Map.empty Map.empty Nothing
+
+end :: GridLandConfig -> GridLandCommon -> IO ()
+end GridLandConfig{..} GridLandCommon{..} = do
+    SDL.freeSurface screen
     SDL.quit
+
+putStrLn' :: String -> GridLand a ()
+putStrLn' = liftIO . putStrLn
+
+print' :: Show b => b -> GridLand a ()
+print' = liftIO . print 
+
+titleBar :: String -> GridLand a ()
+titleBar title = liftIO $ SDL.setCaption title ""
+
+background :: Background -> GridLand a ()
+background b = RWS.modify . first $ \s -> s { bkg = b }
+
+drawBackground :: GridLand a ()
+drawBackground = do
+    (s, cmap) <- RWS.asks (screen &&& colorMap)
+    b <- RWS.gets (bkg . fst)
+    void . liftIO $ case b of
+        BkgColor c -> SDL.fillRect s Nothing (cmap c)
+        BkgImage i -> SDL.blitSurface i Nothing s Nothing

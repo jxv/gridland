@@ -5,7 +5,9 @@ import System.Exit as X
 import Data.Functor as X
 import Control.Monad as X
 import Control.Monad.Trans as X
+import Control.Monad.Fix as X
 import Control.Applicative as X
+import Control.Arrow as X
 -- containers
 import Data.Map as X (Map)
 import Data.Set as X (Set)
@@ -17,4 +19,6 @@ import Data.Tuple.Curry as X
 import Data.Tiled as X
 -- astar
 import Data.Graph.AStar as X
-
+-- mtl
+import Control.Monad.RWS as X (RWS, RWST, MonadState, MonadReader, MonadWriter, MonadRWS)
+import Control.Monad.State as X (State, StateT)

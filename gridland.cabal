@@ -24,6 +24,7 @@ library
   default-extensions:
     RecordWildCards
     LambdaCase
+    GeneralizedNewtypeDeriving
   build-depends:
     base >=4.8 && <4.9,
     SDL,
