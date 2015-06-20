@@ -19,12 +19,15 @@ flag demo
 library
   exposed-modules:
     GridLand
-  -- other-modules:       
+  other-modules:
+    GridLand.Import
+    GridLand.Data
   -- other-extensions:
   default-extensions:
     RecordWildCards
     LambdaCase
     GeneralizedNewtypeDeriving
+    FlexibleContexts
   build-depends:
     base >=4.8 && <4.9,
     SDL,
@@ -39,7 +42,8 @@ library
     grid,
     htiled,
     vector,
-    mtl
+    mtl,
+    array
   hs-source-dirs: src
   default-language: Haskell2010
 

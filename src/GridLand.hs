@@ -34,9 +34,9 @@ module GridLand
     , io
     ) where
 
+-- base
 import Debug.Trace
-
-import Import
+import Data.IORef
 -- SDL
 import qualified Graphics.UI.SDL as SDL 
 import qualified Graphics.UI.SDL.Video as SDL 
@@ -60,117 +60,12 @@ import qualified Data.Vector as V
 -- mtl
 import qualified Control.Monad.State as State
 import qualified Control.Monad.RWS as RWS
+-- array
+import qualified Data.Array as Array
 
-import Data.IORef
+import GridLand.Import
+import GridLand.Data
 
-data Config = Config {
-    cfgRows :: Int,
-    cfgCols :: Int,
-    cfgTileSize :: Int
-}
-
-data Foundation = Foundation {
-    screen :: SDL.Surface,
-    colorMap :: Color -> SDL.Pixel,
-    rows :: Int,
-    cols :: Int,
-    tileSize :: Int
-}
-
-data Backdrop
-    = BkdColor Color
-    | BkdImage BackdropImage
-
-newtype BackdropImage = BackdropImage { bkdImageKey :: Int }
-    deriving (Eq, Num, Ord, Show)
-
-data Color
-    = Red
-    | Orange
-    | Yellow
-    | YellowGreen
-    | Green
-    | LightBlue
-    | Blue
-    | Pink
-    | Black
-    | White
-    deriving (Enum, Eq, Bounded, Show)
-
-data Input
-    = Quit
-    | Input
-    deriving (Eq, Show)
-
-newtype Sprite = Sprite { spriteKey :: Int } -- (1 + Tinted-N-Replace * Colors) * Rotations
-    deriving (Eq, Num, Ord, Show)
-
-data ColorFilter
-    = NoFilter
-    | Tint Color
-    | Replace Color
-    deriving (Eq, Show)
-
-data Stretch
-    = Smooth
-    | Pixelated
-    deriving (Eq, Enum, Bounded, Show)
-
-data Angle
-    = Radians Float
-    | Degrees Int
-    deriving (Eq, Show)
-
-data Location = Location {
-    locX :: Int,
-    locY :: Int
-}
-
-data Gfx = Gfx {
-    gfxSurface :: SDL.Surface,
-    gfxLocation :: Location
-}
-
-newtype Sfx = Sfx { sfxKey :: Int }
-    deriving (Eq, Num, Ord, Show)
-
-newtype Music = Music { musicKey :: Int }
-    deriving (Eq, Num, Ord, Show)
-
-data Common = Common {
-    bkdImages :: Map BackdropImage SDL.Surface,
-    sprites :: Map Sprite (V.Vector SDL.Surface),
-    sfxs :: Map Sfx Mixer.Chunk,
-    musics :: Map Music Mixer.Music,
-    currBkd :: Backdrop,
-    playingMusic :: Maybe Music
-}
-
-data Todo = Todo {
-    todoFrontSprites :: Map (Int, Int) Gfx,
-    todoMiddleSprites :: Map (Int, Int) Gfx,
-    todoBackSprites :: Map (Int, Int) Gfx,
-    todoBackdrop :: Backdrop
-}
-
-instance Monoid Backdrop where
-    mempty = BkdColor White
-    mappend _ a = a
-
-instance Monoid Todo where
-    mempty = Todo mempty mempty mempty mempty
-    mappend a b = Todo { 
-            todoFrontSprites = mappend (todoFrontSprites a) (todoFrontSprites b),
-            todoMiddleSprites = mappend (todoMiddleSprites a) (todoMiddleSprites b),
-            todoBackSprites = mappend (todoBackSprites a) (todoBackSprites b),
-            todoBackdrop = mappend (todoBackdrop a) (todoBackdrop b)
-        }
-
-newtype GridLand a b = GridLand { unGridLand :: RWS.RWST Foundation Todo(Common, a) IO b }
-    deriving
-        (Functor, Applicative, Monad, MonadIO, RWS.MonadRWS Foundation Todo (Common, a)
-        ,MonadReader Foundation, MonadWriter Todo, MonadState (Common, a))
- 
 mkConfig :: (Int, Int, Int) -> Config
 mkConfig = uncurryN Config
 
@@ -198,16 +93,46 @@ spriteOpts = noFilters ++ filters
     noFilters = [(NoFilter, theta) | theta <- spriteDegrees]
     filters = [(cf c, theta) | cf <- [Tint, Replace], c <- [minBound..maxBound], theta <-  spriteDegrees]
 
+setColorKey :: (Word8, Word8, Word8) -> SDL.Surface -> IO SDL.Surface
+setColorKey (r, g, b) sur = mapRGB sur r g b >>= SDL.setColorKey sur [SDL.SrcColorKey] >> return sur
+
+mapRGB :: SDL.Surface -> Word8 -> Word8 -> Word8 -> IO SDL.Pixel
+mapRGB = SDL.mapRGB . SDL.surfaceGetPixelFormat
+
+colorToPixel :: Color -> SDL.Pixel
+colorToPixel color = let
+    (r,g,b) = colorValue color
+    v = shiftL 0xff 6 .|. shiftL (fromIntegral b) 4 .|. shiftL (fromIntegral g) 2 .|. (fromIntegral r) 
+    in SDL.Pixel v
+
 loadSpriteStretch :: (FilePath, Stretch) -> GridLand a Sprite
 loadSpriteStretch (path, stretch) = do
-    base <- liftIO $ Image.load path
+    base <- liftIO $ Image.load path >>= SDL.displayFormat >>= setColorKey (0xff,0x00,0xff)
     let (w,h) = (SDL.surfaceGetWidth base, SDL.surfaceGetHeight base)
     let side = max w h 
     ts <- RWS.asks tileSize
     let zoom = (fromIntegral ts) / (fromIntegral side)
-    let drw (_, theta) = do
-            Gfx.rotozoom base (fromIntegral theta) zoom (stretch == Smooth)
-    frames <- liftIO $ mapM drw spriteOpts
+    let blit (cf, theta) = do
+            rotozoom <- Gfx.rotozoom base (fromIntegral theta) zoom (stretch == Smooth)
+            ping <- SDL.displayFormat rotozoom >>= setColorKey (0xff, 0x00, 0xff)
+            pong <- setColorKey (0xff, 0x00, 0xff) rotozoom
+            let (w,h) = (SDL.surfaceGetWidth rotozoom, SDL.surfaceGetHeight rotozoom)
+            let fmt = SDL.surfaceGetPixelFormat rotozoom
+            let cfFn v = case cf of
+                    NoFilter -> SDL.Pixel v
+                    Tint color -> SDL.Pixel v -- colorToPixel color
+                    Replace color -> let
+                        (SDL.Pixel p) = colorToPixel color
+                        in SDL.Pixel $ if 0x00ff00ff == p .&. 0x00ffffff
+                            then 0x00ff00ff
+                            else p
+            forM_ ([(x,y) | x <- [0 .. w - 1], y <- [0 .. h - 1]]) $ \(x,y) -> do
+                (SDL.Pixel v) <- getPixel32 x y ping
+                putPixel32 x y (cfFn v) pong
+            SDL.freeSurface ping
+            --SDL.freeSurface rotozoom
+            return pong
+    frames <- liftIO $ mapM blit spriteOpts
     liftIO $ SDL.freeSurface base
     let spriteFrames = V.fromListN totalFrames frames
     key <- RWS.gets (Map.size . sprites . fst)
@@ -219,7 +144,43 @@ loadSprite :: (FilePath) -> GridLand a Sprite
 loadSprite (path) = loadSpriteStretch (path, Smooth)
 
 copySurface :: SDL.Surface -> IO SDL.Surface
-copySurface = SDL.displayFormat
+copySurface sur = do
+    copy <- copyFromSurface sur
+    SDL.blitSurface sur Nothing copy Nothing
+    return copy
+
+copyFromSurface :: SDL.Surface -> IO SDL.Surface
+copyFromSurface sur = do
+    let fmt = SDL.surfaceGetPixelFormat sur
+    bpp <- fromIntegral `liftM` SDL.pixelFormatGetBitsPerPixel fmt
+    rMask <- pixelFormatGetRMask fmt
+    gMask <- pixelFormatGetGMask fmt
+    bMask <- pixelFormatGetBMask fmt
+    flags <- SDL.surfaceGetFlags sur
+    aMask <- if elem SDL.SrcColorKey flags then return 0 else pixelFormatGetAMask fmt
+    SDL.createRGBSurface [SDL.SWSurface] (SDL.surfaceGetWidth sur) (SDL.surfaceGetHeight sur) bpp rMask gMask bMask aMask 
+
+pixelFormatGetRMask :: SDL.PixelFormat -> IO Word32
+pixelFormatGetRMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 16
+
+pixelFormatGetGMask :: SDL.PixelFormat -> IO Word32
+pixelFormatGetGMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 20
+
+pixelFormatGetBMask :: SDL.PixelFormat -> IO Word32
+pixelFormatGetBMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 24
+
+pixelFormatGetAMask :: SDL.PixelFormat -> IO Word32
+pixelFormatGetAMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 28
+
+getPixel32 :: Int -> Int -> SDL.Surface -> IO SDL.Pixel
+getPixel32 x y s = do
+    pixels <- castPtr `liftM` SDL.surfaceGetPixels s
+    SDL.Pixel `liftM` peekElemOff pixels ((y * SDL.surfaceGetWidth s) + x)
+
+putPixel32 :: Int -> Int -> SDL.Pixel -> SDL.Surface -> IO ()
+putPixel32 x y (SDL.Pixel pixel) s = do
+    pixels <- castPtr `liftM` SDL.surfaceGetPixels s
+    pokeElemOff pixels ((y * SDL.surfaceGetWidth s) + x) pixel
 
 loadBackdropImageStretch :: (FilePath, Stretch) -> GridLand a Backdrop
 loadBackdropImageStretch (path, stretch) = do
@@ -245,8 +206,8 @@ pollEvents = do
         then return []
         else (:) <$> return event <*> pollEvents
 
-getInputs :: IO [Input]
-getInputs = do
+pollInput :: IO [Input]
+pollInput = do
     events <- pollEvents
     return $ foldr cvt [] events
  where
@@ -303,6 +264,12 @@ gfxRect :: Int -> Location -> SDL.Surface -> SDL.Rect
 gfxRect ts Location{..} sur = let
     (w, h) = (SDL.surfaceGetWidth sur, SDL.surfaceGetHeight sur)
     in SDL.Rect (ts * locX) (ts * locY) ts ts
+
+class ToSprite a where
+    toSprite :: a -> Sprite
+
+drawSpriteMapFront :: ToSprite a => Map Location a -> GridLand a ()
+drawSpriteMapFront = undefined
 
 drawSpriteFront :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
 drawSpriteFront (sprite, cf, loc, theta) = do
@@ -382,7 +349,7 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
     let dgfx = drawGfx (screen foundation) (tileSize foundation)
     endState <- ($ initState) $ fix $ \loop state -> do
         startTick <- SDL.getTicks
-        inputs <- getInputs
+        inputs <- pollInput
         (continue, state', todo) <- RWS.runRWST (unGridLand update) foundation state
         mapM_ dgfx (Map.elems $ todoBackSprites todo)
         mapM_ dgfx (Map.elems $ todoMiddleSprites todo)
@@ -400,7 +367,7 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
 start :: Config -> IO Foundation
 start Config{..} = do
     SDL.init [SDL.InitEverything]
-    screen <- SDL.setVideoMode (cfgCols * cfgTileSize) (cfgRows * cfgTileSize) 16 [SDL.SWSurface]
+    screen <- SDL.setVideoMode (cfgCols * cfgTileSize) (cfgRows * cfgTileSize) 32 [SDL.SWSurface]
     SDL.setCaption "Grid Land" ""
     SDL.enableUnicode True
     colorMap <- getColorMap screen
@@ -453,3 +420,5 @@ drawBackdrop = do
 
 io :: IO b -> GridLand a b
 io = liftIO
+
+
