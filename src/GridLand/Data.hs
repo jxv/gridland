@@ -47,10 +47,10 @@ data Color
 
 data Input
     = Char Char
-    | ArrowUp
-    | ArrowDown
-    | ArrowLeft
-    | ArrowRight
+    | UpArrow
+    | DownArrow
+    | LeftArrow
+    | RightArrow
     | Enter
     | Shift
     | Ctrl
