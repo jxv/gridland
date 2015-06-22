@@ -1,28 +1,39 @@
 module Main where
 
+import Control.Monad (unless)
 import GridLand
 
 main :: IO ()
-main = runGridLand (myCfg, myStart, myUpdate, myEnd)
+main = runGridLand (cfg, start, update, end)
 
-myCfg :: Config
-myCfg = mkConfig(10, 10, 64)
+cfg :: Config
+cfg = Config { cfgRows = 20, cfgCols = 30, cfgTileSize = 32 }
 
-myStart :: GridLand () (Sprite, Int)
-myStart = do
-    bkgImg <- loadBackdropImageStretch("data/image.bmp", Pixelated)
+data App = App {
+    colorSprite :: Sprite,
+    degrees :: Int
+}
+
+start :: GridLand () App
+start = do
+    bkgImg <- loadBackdropImage "data/image.bmp"
     backdrop bkgImg
-    backdrop $ BkdColor(Pink)
-    colorSprite <- loadSprite("data/image.bmp")
-    return(colorSprite, 0)
+    backdrop (BkdColor Red)
+    colorSprite <- loadSprite "data/image.bmp"
+    music <- loadMusic "data/amen_break.wav"
+    playMusic music Nothing
+    return (App colorSprite 0)
 
-myUpdate :: GridLand (Sprite, Int) Bool
-myUpdate = do
-    (colorSprite, n) <- getData
-    drawSpriteFront(colorSprite, Tint Blue, mkLocation(1,2), Degrees n)
-    drawSpriteBack(colorSprite, NoFilter, mkLocation(2,2), Degrees (n * 3))
-    putData (colorSprite, n + 1)
-    return(True)
+update :: GridLand App Bool
+update = do
+    app <- getData
+    drawSpriteFront (colorSprite app) (Tint Blue) (Location 1 2) (Degrees (degrees app))
+    drawSpriteFront (colorSprite app) (Tint Blue) (Location 2 2) (Degrees (degrees app))
+    drawSpriteFront (colorSprite app) (Replace Blue) (Location 2 3) (Degrees (degrees app))
+    drawSpriteFront (colorSprite app) (Tint Blue) (Location 3 2) (Degrees (degrees app))
+    drawSpriteBack (colorSprite app) (Tint Orange) (Location 3 3) (Degrees (3 * degrees app))
+    putData app{ degrees = degrees app + 1 }
+    return True
 
-myEnd :: GridLand (Sprite, Int) ()
-myEnd = return ()
+end :: GridLand App ()
+end = return ()

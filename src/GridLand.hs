@@ -8,6 +8,7 @@ module GridLand
     , Input(..)
     , Key(..)
     , KeyState(..)
+    , Location(..)
     , BackdropImage
     , Sprite
     , Sfx
@@ -28,8 +29,6 @@ module GridLand
     , putStrLn'
     , runGridLand
     , backdrop
-    , mkConfig
-    , mkLocation
     , getData
     , putData
     , modifyData
@@ -70,14 +69,8 @@ import qualified Data.Array as Array
 import GridLand.Import
 import GridLand.Data
 
-mkConfig :: (Int, Int, Int) -> Config
-mkConfig = uncurryN Config
-
-mkLocation :: (Int, Int) -> Location
-mkLocation (x,y) = Location { locX = x, locY = y }
-
-mkTodo :: Todo
-mkTodo = Todo Map.empty Map.empty Map.empty (BkdColor White)
+newTodo :: Todo
+newTodo = Todo Map.empty Map.empty Map.empty (BkdColor White)
 
 getData :: GridLand a a
 getData = RWS.gets snd
@@ -109,8 +102,8 @@ colorToPixel color = let
     v = shiftL 0xff 6 .|. shiftL (fromIntegral b) 4 .|. shiftL (fromIntegral g) 2 .|. (fromIntegral r) 
     in SDL.Pixel v
 
-loadSpriteStretch :: (FilePath, Stretch) -> GridLand a Sprite
-loadSpriteStretch (path, stretch) = do
+loadSpriteStretch :: FilePath -> Stretch -> GridLand a Sprite
+loadSpriteStretch path stretch = do
     base <- liftIO $ Image.load path >>= SDL.displayFormat >>= setColorKey (0xff,0x00,0xff)
     let (w,h) = (SDL.surfaceGetWidth base, SDL.surfaceGetHeight base)
     let side = max w h 
@@ -144,8 +137,8 @@ loadSpriteStretch (path, stretch) = do
     RWS.modify . first $ \s -> s { sprites = Map.insert spr spriteFrames (sprites s) }
     return spr
 
-loadSprite :: (FilePath) -> GridLand a Sprite
-loadSprite (path) = loadSpriteStretch (path, Smooth)
+loadSprite :: FilePath -> GridLand a Sprite
+loadSprite path = loadSpriteStretch path Smooth
 
 copySurface :: SDL.Surface -> IO SDL.Surface
 copySurface sur = do
@@ -186,8 +179,8 @@ putPixel32 x y (SDL.Pixel pixel) s = do
     pixels <- castPtr `liftM` SDL.surfaceGetPixels s
     pokeElemOff pixels ((y * SDL.surfaceGetWidth s) + x) pixel
 
-loadBackdropImageStretch :: (FilePath, Stretch) -> GridLand a Backdrop
-loadBackdropImageStretch (path, stretch) = do
+loadBackdropImageStretch :: FilePath -> Stretch -> GridLand a Backdrop
+loadBackdropImageStretch path stretch = do
     base <- liftIO $ Image.load path
     scr <- RWS.asks screen
     let (scrW,scrH) = (SDL.surfaceGetWidth scr, SDL.surfaceGetHeight scr)
@@ -200,8 +193,8 @@ loadBackdropImageStretch (path, stretch) = do
     liftIO $ SDL.freeSurface base
     return (BkdImage bi)
 
-loadBackdropImage :: (FilePath) -> GridLand a Backdrop
-loadBackdropImage (path) = loadBackdropImageStretch (path, Smooth)
+loadBackdropImage :: FilePath -> GridLand a Backdrop
+loadBackdropImage path = loadBackdropImageStretch path Smooth
 
 pollEvents :: IO [SDL.Event]
 pollEvents = do
@@ -302,23 +295,23 @@ class ToSprite a where
 drawSpriteMapFront :: ToSprite a => Map Location a -> GridLand a ()
 drawSpriteMapFront = undefined
 
-drawSpriteFront :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
-drawSpriteFront (sprite, cf, loc, theta) = do
+drawSpriteFront :: Sprite -> ColorFilter -> Location -> Angle -> GridLand a ()
+drawSpriteFront sprite cf loc theta = do
     gfx <- spriteGfx sprite cf loc theta
     RWS.tell $ mempty { todoFrontSprites = Map.singleton (locX loc, locY loc) gfx }
 
-drawSpriteMiddle :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
-drawSpriteMiddle (sprite, cf, loc, theta) = do
+drawSpriteMiddle :: Sprite -> ColorFilter -> Location -> Angle  -> GridLand a ()
+drawSpriteMiddle sprite cf loc theta = do
     gfx <- spriteGfx sprite cf loc theta
     RWS.tell $ mempty { todoMiddleSprites = Map.singleton (locX loc, locY loc) gfx }
 
-drawSpriteBack :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
-drawSpriteBack (sprite, cf, loc, theta) = do
+drawSpriteBack :: Sprite -> ColorFilter -> Location -> Angle -> GridLand a ()
+drawSpriteBack sprite cf loc theta = do
     gfx <- spriteGfx sprite cf loc theta
     RWS.tell $ mempty { todoBackSprites = Map.singleton (locX loc, locY loc) gfx }
 
-drawSprite :: (Sprite, ColorFilter, Location, Angle)  -> GridLand a ()
-drawSprite (sprite, cf, loc, theta) = do
+drawSprite :: Sprite -> ColorFilter -> Location -> Angle -> GridLand a ()
+drawSprite sprite cf loc theta = do
     (s, ts) <- RWS.asks (screen &&& tileSize)
     Gfx{..} <- spriteGfx sprite cf loc theta
     let (w, h) = (SDL.surfaceGetWidth gfxSurface, SDL.surfaceGetHeight gfxSurface)
@@ -339,8 +332,8 @@ loadMusic (path) = do
     RWS.modify . first $ \s -> s { musics = Map.insert music mus (musics s) }
     return music
 
-playMusic :: (Music, Maybe Int) -> GridLand a ()
-playMusic (music, mloops) = do
+playMusic :: Music -> Maybe Int -> GridLand a ()
+playMusic music mloops = do
     mus <- RWS.gets ((Map.! music) . musics . fst)
     let loops = maybe (-1) (\n -> if n < -1 then 0 else n) mloops
     liftIO $ Mixer.playMusic mus loops
@@ -373,7 +366,7 @@ establishPlayingMusic = do
 runGridLand :: (Config, GridLand () a, GridLand a Bool, GridLand a ()) -> IO ()
 runGridLand (cfg, onStart, onUpdate, onEnd) = do
     foundation <- start cfg
-    let common = mkCommon
+    let common = newCommon
     (initUserData, (initCommon,_), _) <- RWS.runRWST (unGridLand onStart) foundation (common, ())
     let initState = (initCommon, initUserData)
     let update = establishPlayingMusic >> onUpdate >> drawBackdrop
@@ -413,8 +406,8 @@ getColorMap s = do
     let table = V.fromList pixels
     return $ \c -> table V.! (fromEnum c)
 
-mkCommon :: Common
-mkCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing
+newCommon :: Common
+newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing
 
 end :: Foundation -> Common -> IO ()
 end Foundation{..} Common{..} = do
@@ -451,5 +444,3 @@ drawBackdrop = do
 
 io :: IO b -> GridLand a b
 io = liftIO
-
-
