@@ -46,8 +46,18 @@ data Color
     deriving (Enum, Eq, Bounded, Show)
 
 data Input
-    = Quit
-    | Input
+    = Char Char
+    | ArrowUp
+    | ArrowDown
+    | ArrowLeft
+    | ArrowRight
+    | Enter
+    | Shift
+    | Ctrl
+    | Alt
+    | Tab
+    | Backspace
+    | Quit
     deriving (Eq, Show)
 
 newtype Sprite = Sprite { spriteKey :: Int } -- (1 + Tinted-N-Replace * Colors) * Rotations
