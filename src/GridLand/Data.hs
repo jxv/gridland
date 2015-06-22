@@ -46,6 +46,11 @@ data Color
     deriving (Enum, Eq, Bounded, Show)
 
 data Input
+    = Quit
+    | Key Key KeyState
+    deriving (Eq, Show)
+
+data Key
     = Char Char
     | UpArrow
     | DownArrow
@@ -56,9 +61,15 @@ data Input
     | Ctrl
     | Alt
     | Tab
-    | Backspace
-    | Quit
+    | Backspace 
+    | Meta
     deriving (Eq, Show)
+
+data KeyState
+    = Pressed
+    | Held
+    | Released
+    deriving (Enum, Eq, Bounded, Show)
 
 newtype Sprite = Sprite { spriteKey :: Int } -- (1 + Tinted-N-Replace * Colors) * Rotations
     deriving (Eq, Num, Ord, Show)

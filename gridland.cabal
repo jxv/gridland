@@ -28,6 +28,7 @@ library
     LambdaCase
     GeneralizedNewtypeDeriving
     FlexibleContexts
+    MultiWayIf
   build-depends:
     base >=4.8 && <4.9,
     SDL,

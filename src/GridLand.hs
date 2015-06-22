@@ -5,6 +5,9 @@ module GridLand
     , ColorFilter(..)
     , Angle(..)
     , Backdrop(..)
+    , Input(..)
+    , Key(..)
+    , KeyState(..)
     , BackdropImage
     , Sprite
     , Sfx
@@ -37,6 +40,7 @@ module GridLand
 -- base
 import Debug.Trace
 import Data.IORef
+import Data.Char
 -- SDL
 import qualified Graphics.UI.SDL as SDL 
 import qualified Graphics.UI.SDL.Video as SDL 
@@ -211,8 +215,35 @@ pollInput = do
     events <- pollEvents
     return $ foldr cvt [] events
  where
+    -- Quit
     cvt SDL.Quit inputs = Quit : inputs
+    cvt (SDL.KeyDown (SDL.Keysym keysym _ ch)) inputs = case keysym of
+        SDL.SDLK_ESCAPE -> Quit : inputs
+    -- Key
+        SDL.SDLK_UP -> pressed UpArrow : inputs
+        SDL.SDLK_DOWN -> pressed DownArrow : inputs
+        SDL.SDLK_LEFT -> pressed LeftArrow : inputs
+        SDL.SDLK_RIGHT -> pressed RightArrow : inputs
+        SDL.SDLK_RETURN -> pressed Enter : inputs
+        SDL.SDLK_LSHIFT -> pressed Shift : inputs
+        SDL.SDLK_RSHIFT -> pressed Shift : inputs
+        SDL.SDLK_LCTRL -> pressed Ctrl : inputs
+        SDL.SDLK_RCTRL -> pressed Ctrl : inputs
+        SDL.SDLK_LALT -> pressed Alt : inputs
+        SDL.SDLK_RALT -> pressed Alt : inputs
+        SDL.SDLK_TAB-> pressed Tab : inputs
+        SDL.SDLK_BACKSPACE -> pressed Backspace : inputs
+        SDL.SDLK_LSUPER -> pressed Meta : inputs
+        SDL.SDLK_RSUPER -> pressed Meta : inputs
+        key ->
+            if (key >= SDL.SDLK_SPACE && key <= SDL.SDLK_z)
+            then pressed (Char $ toLower ch) : inputs
+    -- Ignore
+            else inputs
     cvt _ inputs = inputs
+
+pressed :: Key -> Input
+pressed = flip Key Pressed
 
 colorValue :: Integral a => Color -> (a, a, a)
 colorValue = \case
