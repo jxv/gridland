@@ -71,7 +71,8 @@ data KeyState
     | Released
     deriving (Enum, Eq, Bounded, Show)
 
-newtype Sprite = Sprite { spriteKey :: Int } -- (1 + Tinted-N-Replace * Colors) * Rotations
+-- (1 + Tinted-N-Replace * Colors) * Rotations
+newtype Sprite = Sprite { spriteKey :: Int }
     deriving (Eq, Num, Ord, Show)
 
 data ColorFilter
@@ -112,7 +113,8 @@ data Common = Common {
     sfxs :: Map Sfx Mixer.Chunk,
     musics :: Map Music Mixer.Music,
     currBkd :: Backdrop,
-    playingMusic :: Maybe Music
+    playingMusic :: Maybe Music,
+    inputs :: [Input]
 }
 
 data Todo = Todo {
@@ -126,6 +128,12 @@ newtype GridLand a b = GridLand { unGridLand :: RWST Foundation Todo(Common, a) 
     deriving
         (Functor, Applicative, Monad, MonadIO, MonadRWS Foundation Todo (Common, a)
         ,MonadReader Foundation, MonadWriter Todo, MonadState (Common, a))
+
+class ToSprite a where
+    toSprite :: a -> Sprite
+
+instance ToSprite Sprite where
+    toSprite = id
 
 instance Monoid Backdrop where
     mempty = BkdColor White

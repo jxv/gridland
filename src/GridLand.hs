@@ -9,6 +9,7 @@ module GridLand
     , Key(..)
     , KeyState(..)
     , Location(..)
+    , ToSprite(..)
     , BackdropImage
     , Sprite
     , Sfx
@@ -34,6 +35,7 @@ module GridLand
     , modifyData
     , getPlayingMusic
     , io
+    , getInputs
     ) where
 
 -- base
@@ -99,7 +101,7 @@ mapRGB = SDL.mapRGB . SDL.surfaceGetPixelFormat
 colorToPixel :: Color -> SDL.Pixel
 colorToPixel color = let
     (r,g,b) = colorValue color
-    v = shiftL 0xff 6 .|. shiftL (fromIntegral b) 4 .|. shiftL (fromIntegral g) 2 .|. (fromIntegral r) 
+    v = shiftL 0xff (8 * 3)  .|. shiftL (fromIntegral b) (8 * 2) .|. shiftL (fromIntegral g) (8 * 1) .|. (fromIntegral r) 
     in SDL.Pixel v
 
 loadSpriteStretch :: FilePath -> Stretch -> GridLand a Sprite
@@ -117,17 +119,24 @@ loadSpriteStretch path stretch = do
             let fmt = SDL.surfaceGetPixelFormat rotozoom
             let cfFn v = case cf of
                     NoFilter -> SDL.Pixel v
-                    Tint color -> SDL.Pixel v -- colorToPixel color
+                    Tint color -> let
+                        (tr, tg, tb) = colorValue color
+                        (cr, cg, cb) = fromColor32 v
+                        (r, g, b) = (shiftR tr 1 + shiftR cr 1, shiftR tg 1 + shiftR cg 1, shiftR tb 1 + shiftR cb 1)
+                        tinted = toColor32 r g b
+                        (SDL.Pixel p) = colorToPixel color
+                        in SDL.Pixel $ if 0x00ff00ff == v .&. 0x00ffffff
+                            then 0x00ff00ff
+                            else tinted
                     Replace color -> let
                         (SDL.Pixel p) = colorToPixel color
-                        in SDL.Pixel $ if 0x00ff00ff == p .&. 0x00ffffff
+                        in SDL.Pixel $ if 0x00ff00ff == v .&. 0x00ffffff
                             then 0x00ff00ff
                             else p
             forM_ ([(x,y) | x <- [0 .. w - 1], y <- [0 .. h - 1]]) $ \(x,y) -> do
                 (SDL.Pixel v) <- getPixel32 x y ping
                 putPixel32 x y (cfFn v) pong
             SDL.freeSurface ping
-            --SDL.freeSurface rotozoom
             return pong
     frames <- liftIO $ mapM blit spriteOpts
     liftIO $ SDL.freeSurface base
@@ -235,8 +244,24 @@ pollInput = do
             else inputs
     cvt _ inputs = inputs
 
+getInputs :: GridLand a [Input]
+getInputs = State.gets (inputs . fst)
+
 pressed :: Key -> Input
 pressed = flip Key Pressed
+
+fromColor32 :: Word32 -> (Word8, Word8, Word8)
+fromColor32 c =
+    (fromIntegral ((shiftR c (2 * 8)) .&. 0xff),
+     fromIntegral ((shiftR c 8) .&. 0xff),
+     fromIntegral (c .&. 0xff))
+
+toColor32 :: Word8 -> Word8 -> Word8 -> Word32
+toColor32 r g b =
+    shiftL 0xff (3 * 8) .|.
+    shiftL (fromIntegral b) (2 * 8) .|.
+    shiftL (fromIntegral g) 8 .|.
+    (fromIntegral r)
 
 colorValue :: Integral a => Color -> (a, a, a)
 colorValue = \case
@@ -255,7 +280,7 @@ colorValue' :: Integral a => Color -> (a -> a -> a -> b) -> b
 colorValue' c f = uncurryN f (colorValue c)
 
 rotations, colors, withoutColors, withColors, totalFrames, colorAngleInterval:: Int
-rotations = 8 -- 36 
+rotations = 36 
 colors = 1 + fromEnum (maxBound :: Color)
 withColors = 2
 withoutColors = 1
@@ -289,31 +314,28 @@ gfxRect ts Location{..} sur = let
     (w, h) = (SDL.surfaceGetWidth sur, SDL.surfaceGetHeight sur)
     in SDL.Rect (ts * locX) (ts * locY) ts ts
 
-class ToSprite a where
-    toSprite :: a -> Sprite
-
-drawSpriteMapFront :: ToSprite a => Map Location a -> GridLand a ()
+drawSpriteMapFront :: ToSprite s => Map Location s -> GridLand a ()
 drawSpriteMapFront = undefined
 
-drawSpriteFront :: Sprite -> ColorFilter -> Location -> Angle -> GridLand a ()
-drawSpriteFront sprite cf loc theta = do
-    gfx <- spriteGfx sprite cf loc theta
+drawSpriteFront :: ToSprite s => s -> ColorFilter -> Location -> Angle -> GridLand a ()
+drawSpriteFront a cf loc theta = do
+    gfx <- spriteGfx (toSprite a) cf loc theta
     RWS.tell $ mempty { todoFrontSprites = Map.singleton (locX loc, locY loc) gfx }
 
-drawSpriteMiddle :: Sprite -> ColorFilter -> Location -> Angle  -> GridLand a ()
-drawSpriteMiddle sprite cf loc theta = do
-    gfx <- spriteGfx sprite cf loc theta
+drawSpriteMiddle :: ToSprite s => s -> ColorFilter -> Location -> Angle  -> GridLand a ()
+drawSpriteMiddle a cf loc theta = do
+    gfx <- spriteGfx (toSprite a) cf loc theta
     RWS.tell $ mempty { todoMiddleSprites = Map.singleton (locX loc, locY loc) gfx }
 
-drawSpriteBack :: Sprite -> ColorFilter -> Location -> Angle -> GridLand a ()
-drawSpriteBack sprite cf loc theta = do
-    gfx <- spriteGfx sprite cf loc theta
+drawSpriteBack :: ToSprite s => s -> ColorFilter -> Location -> Angle -> GridLand a ()
+drawSpriteBack a cf loc theta = do
+    gfx <- spriteGfx (toSprite a) cf loc theta
     RWS.tell $ mempty { todoBackSprites = Map.singleton (locX loc, locY loc) gfx }
 
-drawSprite :: Sprite -> ColorFilter -> Location -> Angle -> GridLand a ()
-drawSprite sprite cf loc theta = do
+drawSprite :: ToSprite s => s -> ColorFilter -> Location -> Angle -> GridLand a ()
+drawSprite a cf loc theta = do
     (s, ts) <- RWS.asks (screen &&& tileSize)
-    Gfx{..} <- spriteGfx sprite cf loc theta
+    Gfx{..} <- spriteGfx (toSprite a) cf loc theta
     let (w, h) = (SDL.surfaceGetWidth gfxSurface, SDL.surfaceGetHeight gfxSurface)
     let tileRect = Just $ SDL.Rect ((w - ts) `div` 2) ((h - ts) `div` 2) ts ts
     void . liftIO $ SDL.blitSurface gfxSurface tileRect s (Just $ gfxRect ts gfxLocation gfxSurface)
@@ -324,7 +346,7 @@ drawGfx scr ts Gfx{..} = do
     let tileRect = Just $ SDL.Rect ((w - ts) `div` 2) ((h - ts) `div` 2) ts ts
     void $ SDL.blitSurface gfxSurface tileRect scr (Just $ gfxRect ts gfxLocation gfxSurface)
 
-loadMusic :: (FilePath) -> GridLand a Music
+loadMusic :: FilePath -> GridLand a Music
 loadMusic (path) = do
     mus <- liftIO $ Mixer.loadMUS path
     key <- RWS.gets (Map.size . musics . fst)
@@ -374,7 +396,8 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
     endState <- ($ initState) $ fix $ \loop state -> do
         startTick <- SDL.getTicks
         inputs <- pollInput
-        (continue, state', todo) <- RWS.runRWST (unGridLand update) foundation state
+        let state' = first (\s -> s {inputs = inputs}) state
+        (continue, state'', todo) <- RWS.runRWST (unGridLand update) foundation state'
         mapM_ dgfx (Map.elems $ todoBackSprites todo)
         mapM_ dgfx (Map.elems $ todoMiddleSprites todo)
         mapM_ dgfx (Map.elems $ todoFrontSprites todo)
@@ -383,8 +406,8 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
         let diff = endTick - startTick
         when (diff < 16) (SDL.delay $ 16 - diff)
         if elem Quit inputs
-            then return state'
-            else loop state'
+            then return state''
+            else loop state''
     void $ RWS.execRWST (unGridLand onEnd) foundation endState
     end foundation common
 
@@ -407,7 +430,7 @@ getColorMap s = do
     return $ \c -> table V.! (fromEnum c)
 
 newCommon :: Common
-newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing
+newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing []
 
 end :: Foundation -> Common -> IO ()
 end Foundation{..} Common{..} = do
