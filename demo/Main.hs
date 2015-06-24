@@ -19,7 +19,6 @@ start :: GridLand () App
 start = do
     bkgImg <- loadBackdropImage "data/image.bmp"
     backdrop bkgImg
-    backdrop (BkdColor Red)
     sprite <- loadSprite "data/boulder.png"
     music <- loadMusic "data/amen_break.wav"
     playMusic music Nothing
@@ -34,17 +33,17 @@ update = do
     drawSpriteMiddle (sprite app) (Tint Orange) (Location 3 2) (angle app)
     let (Degrees d) = angle app
     inputs <- getInputs
-    let loc = location app
+    let Location{..} = location app
     let loc' =
             if elem (Key UpArrow Pressed) inputs
-            then Location (locX loc) (locY loc - 1)
+            then Location locX (locY - 1)
             else if elem (Key DownArrow Pressed) inputs
-                then Location (locX loc) (locY loc + 1)
-                else if elem (Key LeftArrow Pressed) inputs
-                    then Location (locX loc - 1) (locY loc)
-                    else if elem (Key RightArrow Pressed) inputs
-                        then Location (locX loc + 1) (locY loc)
-                        else loc
+            then Location locX (locY + 1)
+            else if elem (Key LeftArrow Pressed) inputs
+            then Location (locX - 1) locY
+            else if elem (Key RightArrow Pressed) inputs
+            then Location (locX + 1) locY
+            else Location locX locY
     putData app{ angle = Degrees (d + 1), location = loc' }
     return True
 

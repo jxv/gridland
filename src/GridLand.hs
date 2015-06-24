@@ -147,7 +147,7 @@ loadSpriteStretch path stretch = do
     return spr
 
 loadSprite :: FilePath -> GridLand a Sprite
-loadSprite path = loadSpriteStretch path Smooth
+loadSprite path = loadSpriteStretch path Pixelated
 
 copySurface :: SDL.Surface -> IO SDL.Surface
 copySurface sur = do
