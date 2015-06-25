@@ -212,10 +212,10 @@ pollEvents = do
         then return []
         else (:) <$> return event <*> pollEvents
 
-pollInput :: IO [Input]
-pollInput = do
+pollInputs :: IO [Input]
+pollInputs = do
     events <- pollEvents
-    return $ foldr cvt [] events
+    return (foldr cvt [] events)
  where
     -- Quit
     cvt SDL.Quit inputs = Quit : inputs
@@ -243,6 +243,10 @@ pollInput = do
     -- Ignore
             else inputs
     cvt _ inputs = inputs
+
+mergeInputs :: [Input] -> [Input]
+mergeInputs [] = []
+mergeInputs inps = inps
 
 getInputs :: GridLand a [Input]
 getInputs = State.gets (inputs . fst)
@@ -395,7 +399,7 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
     let dgfx = drawGfx (screen foundation) (tileSize foundation)
     endState <- ($ initState) $ fix $ \loop state -> do
         startTick <- SDL.getTicks
-        inputs <- pollInput
+        inputs <- mergeInputs <$> pollInputs
         let state' = first (\s -> s {inputs = inputs}) state
         (continue, state'', todo) <- RWS.runRWST (unGridLand update) foundation state'
         mapM_ dgfx (Map.elems $ todoBackSprites todo)
