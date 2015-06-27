@@ -221,7 +221,7 @@ pollInputs = do
     cvt SDL.Quit inputs = Quit : inputs
     cvt (SDL.KeyDown (SDL.Keysym keysym _ ch)) inputs = case keysym of
         SDL.SDLK_ESCAPE -> Quit : inputs
-    -- Key
+    -- Key (pressed)
         SDL.SDLK_UP -> pressed UpArrow : inputs
         SDL.SDLK_DOWN -> pressed DownArrow : inputs
         SDL.SDLK_LEFT -> pressed LeftArrow : inputs
@@ -240,19 +240,51 @@ pollInputs = do
         key ->
             if (key >= SDL.SDLK_SPACE && key <= SDL.SDLK_z)
             then pressed (Char $ toLower ch) : inputs
-    -- Ignore
-            else inputs
+            else inputs -- ignore
+    -- Key (released)
+    cvt (SDL.KeyUp (SDL.Keysym keysym _ ch)) inputs = case keysym of
+        SDL.SDLK_UP -> released UpArrow : inputs
+        SDL.SDLK_DOWN -> released DownArrow : inputs
+        SDL.SDLK_LEFT -> released LeftArrow : inputs
+        SDL.SDLK_RIGHT -> released RightArrow : inputs
+        SDL.SDLK_RETURN -> released Enter : inputs
+        SDL.SDLK_LSHIFT -> released Shift : inputs
+        SDL.SDLK_RSHIFT -> released Shift : inputs
+        SDL.SDLK_LCTRL -> released Ctrl : inputs
+        SDL.SDLK_RCTRL -> released Ctrl : inputs
+        SDL.SDLK_LALT -> released Alt : inputs
+        SDL.SDLK_RALT -> released Alt : inputs
+        SDL.SDLK_TAB-> released Tab : inputs
+        SDL.SDLK_BACKSPACE -> released Backspace : inputs
+        SDL.SDLK_LSUPER -> released Meta : inputs
+        SDL.SDLK_RSUPER -> released Meta : inputs
+        key ->
+            if (key >= SDL.SDLK_SPACE && key <= SDL.SDLK_z)
+            then released (Char $ toLower ch) : inputs
+            else inputs -- ignore
     cvt _ inputs = inputs
 
 mergeInputs :: [Input] -> [Input]
 mergeInputs [] = []
 mergeInputs inps = inps
 
+stepInputs :: [Input] -> [Input]
+stepInputs = foldr step []
+ where
+    held key = Key key Held
+    step inp inps = case inp of
+        Key key Pressed -> held key : inps
+        Key key Released -> inps
+        _ -> inp : inps
+
 getInputs :: GridLand a [Input]
 getInputs = State.gets (inputs . fst)
 
 pressed :: Key -> Input
 pressed = flip Key Pressed
+
+released :: Key -> Input
+released = flip Key Released
 
 fromColor32 :: Word32 -> (Word8, Word8, Word8)
 fromColor32 c =
@@ -399,7 +431,7 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
     let dgfx = drawGfx (screen foundation) (tileSize foundation)
     endState <- ($ initState) $ fix $ \loop state -> do
         startTick <- SDL.getTicks
-        inputs <- mergeInputs <$> pollInputs
+        inputs <- (mergeInputs . stepInputs) <$> pollInputs
         let state' = first (\s -> s {inputs = inputs}) state
         (continue, state'', todo) <- RWS.runRWST (unGridLand update) foundation state'
         mapM_ dgfx (Map.elems $ todoBackSprites todo)
