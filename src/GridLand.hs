@@ -264,9 +264,8 @@ pollInputs = do
             else inputs -- ignore
     cvt _ inputs = inputs
 
-mergeInputs :: [Input] -> [Input]
-mergeInputs [] = []
-mergeInputs inps = inps
+mergeInputs :: [Input] -> [Input] -> [Input]
+mergeInputs inps _ = inps
 
 stepInputs :: [Input] -> [Input]
 stepInputs = foldr step []
@@ -431,8 +430,9 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
     let dgfx = drawGfx (screen foundation) (tileSize foundation)
     endState <- ($ initState) $ fix $ \loop state -> do
         startTick <- SDL.getTicks
-        inputs <- (mergeInputs . stepInputs) <$> pollInputs
-        let state' = first (\s -> s {inputs = inputs}) state
+        let inps = (inputs . fst) state
+        inps' <- mergeInputs (stepInputs inps) <$> pollInputs
+        let state' = first (\s -> s { inputs = inps' }) state
         (continue, state'', todo) <- RWS.runRWST (unGridLand update) foundation state'
         mapM_ dgfx (Map.elems $ todoBackSprites todo)
         mapM_ dgfx (Map.elems $ todoMiddleSprites todo)
@@ -441,7 +441,7 @@ runGridLand (cfg, onStart, onUpdate, onEnd) = do
         endTick <- SDL.getTicks
         let diff = endTick - startTick
         when (diff < 16) (SDL.delay $ 16 - diff)
-        if elem Quit inputs
+        if elem Quit inps'
             then return state''
             else loop state''
     void $ RWS.execRWST (unGridLand onEnd) foundation endState
