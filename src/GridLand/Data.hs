@@ -2,12 +2,12 @@ module GridLand.Data where
 
 import GridLand.Import
 -- SDL
-import qualified Graphics.UI.SDL as SDL 
-import qualified Graphics.UI.SDL.Video as SDL 
+import qualified Graphics.UI.SDL as SDL
+import qualified Graphics.UI.SDL.Video as SDL
 -- SDL-image
 import qualified Graphics.UI.SDL.Image as Image
--- SDL-ttf
-import qualified Graphics.UI.SDL.TTF as TTF
+-- SDL-ttf (unused)
+--import qualified Graphics.UI.SDL.TTF as TTF
 -- SDL-mixer
 import qualified Graphics.UI.SDL.Mixer as Mixer
 
@@ -48,6 +48,7 @@ data Color
 data Input
     = Quit
     | Key Key KeyState
+    | Click Location
     deriving (Eq, Show)
 
 data Key
@@ -61,7 +62,7 @@ data Key
     | Ctrl
     | Alt
     | Tab
-    | Backspace 
+    | Backspace
     | Meta
     deriving (Eq, Show)
 
@@ -94,7 +95,7 @@ data Angle
 data Location = Location {
     locX :: Int,
     locY :: Int
-}
+} deriving (Show, Eq)
 
 data Gfx = Gfx {
     gfxSurface :: SDL.Surface,
@@ -114,13 +115,14 @@ data Common = Common {
     musics :: Map Music Mixer.Music,
     currBkd :: Backdrop,
     playingMusic :: Maybe Music,
-    inputs :: [Input]
+    inputs :: [Input],
+    mousePosition :: Location
 }
 
 data Todo = Todo {
-    todoFrontSprites :: Map (Int, Int) Gfx,
-    todoMiddleSprites :: Map (Int, Int) Gfx,
-    todoBackSprites :: Map (Int, Int) Gfx,
+    todoFrontSprites :: Map Location Gfx,
+    todoMiddleSprites :: Map Location Gfx,
+    todoBackSprites :: Map Location Gfx,
     todoBackdrop :: Backdrop
 }
 
@@ -132,6 +134,9 @@ newtype GridLand a b = GridLand { unGridLand :: RWST Foundation Todo(Common, a) 
 class ToSprite a where
     toSprite :: a -> Sprite
 
+instance Ord Location where
+    compare loc0 loc1 = compare (locX loc0, locY loc0) (locX loc1, locY loc1)
+
 instance ToSprite Sprite where
     toSprite = id
 
@@ -141,7 +146,7 @@ instance Monoid Backdrop where
 
 instance Monoid Todo where
     mempty = Todo mempty mempty mempty mempty
-    mappend a b = Todo { 
+    mappend a b = Todo {
             todoFrontSprites = mappend (todoFrontSprites a) (todoFrontSprites b),
             todoMiddleSprites = mappend (todoMiddleSprites a) (todoMiddleSprites b),
             todoBackSprites = mappend (todoBackSprites a) (todoBackSprites b),

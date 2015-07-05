@@ -4,7 +4,7 @@ import Control.Monad (unless)
 import GridLand
 
 main :: IO ()
-main = runGridLand (cfg, start, update, end)
+main = runGridLand cfg start update end
 
 cfg :: Config
 cfg = Config { cfgRows = 20, cfgCols = 32, cfgTileSize = 32 }
@@ -27,25 +27,22 @@ start = do
 update :: GridLand App Bool
 update = do
     app <- getData
-    drawSpriteFront (sprite app) NoFilter (location app) (angle app)
-    drawSpriteMiddle (sprite app) (Tint Blue) (Location 2 2) (angle app)
-    drawSpriteMiddle (sprite app) (Replace Green) (Location 2 3) (angle app)
-    drawSpriteMiddle (sprite app) (Tint Orange) (Location 3 2) (angle app)
+    mpos <- getMousePosition
+    drawSpriteFront (sprite app) NoFilter mpos (angle app)
     let (Degrees d) = angle app
     inputs <- getInputs
-    let Location{..} = location app
-    let loc' =
-            if elem (Key UpArrow Pressed) inputs
-            then Location locX (locY - 1)
-            else if elem (Key DownArrow Pressed) inputs
-            then Location locX (locY + 1)
-            else if elem (Key LeftArrow Pressed) inputs
-            then Location (locX - 1) locY
-            else if elem (Key RightArrow Pressed) inputs
-            then Location (locX + 1) locY
-            else Location locX locY
-    putData app{ angle = Degrees (d + 1), location = loc' }
+    let loc = move (location app) inputs
+    print' mpos
+    putData app{ angle = Degrees (d + 1), location = mpos }
     return True
+
+move :: Location -> [Input] -> Location
+move loc@Location{..} inputs
+    | elem (Key UpArrow Pressed) inputs = Location locX (locY - 1)
+    | elem (Key DownArrow Pressed) inputs = Location locX (locY + 1)
+    | elem (Key LeftArrow Pressed) inputs = Location (locX - 1) locY
+    | elem (Key RightArrow Pressed) inputs = Location (locX + 1) locY
+    | otherwise = loc
 
 end :: GridLand App ()
 end = return ()

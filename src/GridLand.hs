@@ -36,19 +36,22 @@ module GridLand
     , getPlayingMusic
     , io
     , getInputs
+    , getMousePosition
     ) where
 
 -- base
 import Debug.Trace
 import Data.IORef
 import Data.Char
+import Data.Maybe
+import Control.Arrow
 -- SDL
-import qualified Graphics.UI.SDL as SDL 
-import qualified Graphics.UI.SDL.Video as SDL 
+import qualified Graphics.UI.SDL as SDL
+import qualified Graphics.UI.SDL.Video as SDL
 -- SDL-image
 import qualified Graphics.UI.SDL.Image as Image
--- SDL-ttf
-import qualified Graphics.UI.SDL.TTF as TTF
+-- SDL-ttf (unused)
+-- import qualified Graphics.UI.SDL.TTF as TTF
 -- SDL-mixer
 import qualified Graphics.UI.SDL.Mixer as Mixer
 -- SDL-gfx
@@ -67,6 +70,8 @@ import qualified Control.Monad.State as State
 import qualified Control.Monad.RWS as RWS
 -- array
 import qualified Data.Array as Array
+-- safe
+import qualified Safe as Safe
 
 import GridLand.Import
 import GridLand.Data
@@ -101,14 +106,14 @@ mapRGB = SDL.mapRGB . SDL.surfaceGetPixelFormat
 colorToPixel :: Color -> SDL.Pixel
 colorToPixel color = let
     (r,g,b) = colorValue color
-    v = shiftL 0xff (8 * 3)  .|. shiftL (fromIntegral b) (8 * 2) .|. shiftL (fromIntegral g) (8 * 1) .|. (fromIntegral r) 
+    v = shiftL 0xff (8 * 3)  .|. shiftL (fromIntegral b) (8 * 2) .|. shiftL (fromIntegral g) (8 * 1) .|. (fromIntegral r)
     in SDL.Pixel v
 
 loadSpriteStretch :: FilePath -> Stretch -> GridLand a Sprite
 loadSpriteStretch path stretch = do
     base <- liftIO $ Image.load path >>= SDL.displayFormat >>= setColorKey (0xff,0x00,0xff)
     let (w,h) = (SDL.surfaceGetWidth base, SDL.surfaceGetHeight base)
-    let side = max w h 
+    let side = max w h
     ts <- RWS.asks tileSize
     let zoom = (fromIntegral ts) / (fromIntegral side)
     let blit (cf, theta) = do
@@ -164,7 +169,7 @@ copyFromSurface sur = do
     bMask <- pixelFormatGetBMask fmt
     flags <- SDL.surfaceGetFlags sur
     aMask <- if elem SDL.SrcColorKey flags then return 0 else pixelFormatGetAMask fmt
-    SDL.createRGBSurface [SDL.SWSurface] (SDL.surfaceGetWidth sur) (SDL.surfaceGetHeight sur) bpp rMask gMask bMask aMask 
+    SDL.createRGBSurface [SDL.SWSurface] (SDL.surfaceGetWidth sur) (SDL.surfaceGetHeight sur) bpp rMask gMask bMask aMask
 
 pixelFormatGetRMask :: SDL.PixelFormat -> IO Word32
 pixelFormatGetRMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 16
@@ -212,11 +217,24 @@ pollEvents = do
         then return []
         else (:) <$> return event <*> pollEvents
 
-pollInputs :: IO [Input]
-pollInputs = do
+toMousePosition :: Foundation -> (Word16, Word16) -> Location
+toMousePosition Foundation{..} (x,y) = Location {
+        locX = fromIntegral x `div` tileSize,
+        locY = fromIntegral y `div` tileSize
+    }
+
+pollInputs :: Foundation -> IO ([Input], Maybe Location)
+pollInputs foundation = do
     events <- pollEvents
-    return (foldr cvt [] events)
+    return (foldr cvt [] events, mousePos events)
  where
+    mousePos = Safe.headMay . catMaybes . map mpos
+    mpos (SDL.MouseMotion x y _ _) = let
+        pos = toMousePosition foundation (x,y)
+        in if inRange foundation pos
+            then Just pos
+            else Nothing
+    mpos _ = Nothing
     -- Quit
     cvt SDL.Quit inputs = Quit : inputs
     cvt (SDL.KeyDown (SDL.Keysym keysym _ ch)) inputs = case keysym of
@@ -262,10 +280,13 @@ pollInputs = do
             if (key >= SDL.SDLK_SPACE && key <= SDL.SDLK_z)
             then released (Char $ toLower ch) : inputs
             else inputs -- ignore
+    -- Click
+    cvt (SDL.MouseButtonDown x y SDL.ButtonLeft) inputs = Click Location{ locX = fromIntegral x, locY = fromIntegral y } : inputs
+    -- Ignore the rest
     cvt _ inputs = inputs
 
 mergeInputs :: [Input] -> [Input] -> [Input]
-mergeInputs inps _ = inps
+mergeInputs old new = new
 
 stepInputs :: [Input] -> [Input]
 stepInputs = foldr step []
@@ -278,6 +299,9 @@ stepInputs = foldr step []
 
 getInputs :: GridLand a [Input]
 getInputs = State.gets (inputs . fst)
+
+getMousePosition :: GridLand a Location
+getMousePosition = State.gets (mousePosition . fst)
 
 pressed :: Key -> Input
 pressed = flip Key Pressed
@@ -315,7 +339,7 @@ colorValue' :: Integral a => Color -> (a -> a -> a -> b) -> b
 colorValue' c f = uncurryN f (colorValue c)
 
 rotations, colors, withoutColors, withColors, totalFrames, colorAngleInterval:: Int
-rotations = 36 
+rotations = 36
 colors = 1 + fromEnum (maxBound :: Color)
 withColors = 2
 withoutColors = 1
@@ -350,22 +374,23 @@ gfxRect ts Location{..} sur = let
     in SDL.Rect (ts * locX) (ts * locY) ts ts
 
 drawSpriteMapFront :: ToSprite s => Map Location s -> GridLand a ()
-drawSpriteMapFront = undefined
+drawSpriteMapFront sprMap = do
+    return ()
 
 drawSpriteFront :: ToSprite s => s -> ColorFilter -> Location -> Angle -> GridLand a ()
 drawSpriteFront a cf loc theta = do
     gfx <- spriteGfx (toSprite a) cf loc theta
-    RWS.tell $ mempty { todoFrontSprites = Map.singleton (locX loc, locY loc) gfx }
+    RWS.tell $ mempty { todoFrontSprites = Map.singleton loc gfx }
 
 drawSpriteMiddle :: ToSprite s => s -> ColorFilter -> Location -> Angle  -> GridLand a ()
 drawSpriteMiddle a cf loc theta = do
     gfx <- spriteGfx (toSprite a) cf loc theta
-    RWS.tell $ mempty { todoMiddleSprites = Map.singleton (locX loc, locY loc) gfx }
+    RWS.tell $ mempty { todoMiddleSprites = Map.singleton loc gfx }
 
 drawSpriteBack :: ToSprite s => s -> ColorFilter -> Location -> Angle -> GridLand a ()
 drawSpriteBack a cf loc theta = do
     gfx <- spriteGfx (toSprite a) cf loc theta
-    RWS.tell $ mempty { todoBackSprites = Map.singleton (locX loc, locY loc) gfx }
+    RWS.tell $ mempty { todoBackSprites = Map.singleton loc gfx }
 
 drawSprite :: ToSprite s => s -> ColorFilter -> Location -> Angle -> GridLand a ()
 drawSprite a cf loc theta = do
@@ -374,7 +399,7 @@ drawSprite a cf loc theta = do
     let (w, h) = (SDL.surfaceGetWidth gfxSurface, SDL.surfaceGetHeight gfxSurface)
     let tileRect = Just $ SDL.Rect ((w - ts) `div` 2) ((h - ts) `div` 2) ts ts
     void . liftIO $ SDL.blitSurface gfxSurface tileRect s (Just $ gfxRect ts gfxLocation gfxSurface)
- 
+
 drawGfx :: SDL.Surface -> Int -> Gfx -> IO ()
 drawGfx scr ts Gfx{..} = do
     let (w, h) = (SDL.surfaceGetWidth gfxSurface, SDL.surfaceGetHeight gfxSurface)
@@ -405,7 +430,7 @@ stopMusic music = do
             when (music == currMusic) $ do
                 liftIO Mixer.haltMusic
                 RWS.modify . first $ (\s -> s { playingMusic = Nothing } )
-    
+
 stopAllMusic :: GridLand a ()
 stopAllMusic = do
     liftIO Mixer.haltMusic
@@ -419,33 +444,41 @@ establishPlayingMusic = do
     isPlaying <- liftIO Mixer.playingMusic
     unless isPlaying $ RWS.modify . first $ (\s -> s { playingMusic = Nothing } )
 
--- | (Config, Start, Update, End) -> IO ()
-runGridLand :: (Config, GridLand () a, GridLand a Bool, GridLand a ()) -> IO ()
-runGridLand (cfg, onStart, onUpdate, onEnd) = do
-    foundation <- start cfg
+-- | Config -> Start -> Update -> End -> IO ()
+runGridLand :: Config -> GridLand () a -> GridLand a Bool -> GridLand a () -> IO ()
+runGridLand cfg onStart onUpdate onEnd = do
+    foundation@Foundation{..} <- start cfg
     let common = newCommon
     (initUserData, (initCommon,_), _) <- RWS.runRWST (unGridLand onStart) foundation (common, ())
     let initState = (initCommon, initUserData)
     let update = establishPlayingMusic >> onUpdate >> drawBackdrop
-    let dgfx = drawGfx (screen foundation) (tileSize foundation)
+    let dgfx = drawGfx screen tileSize
     endState <- ($ initState) $ fix $ \loop state -> do
         startTick <- SDL.getTicks
         let inps = (inputs . fst) state
-        inps' <- mergeInputs (stepInputs inps) <$> pollInputs
-        let state' = first (\s -> s { inputs = inps' }) state
+        let pos = (mousePosition . fst) state
+        (inps', mpos) <- first (mergeInputs (stepInputs inps)) <$> pollInputs foundation
+        let state' = first (\s -> s {
+                    inputs = inps',
+                    mousePosition = fromMaybe (mousePosition s) mpos
+                }) state
         (continue, state'', todo) <- RWS.runRWST (unGridLand update) foundation state'
-        mapM_ dgfx (Map.elems $ todoBackSprites todo)
-        mapM_ dgfx (Map.elems $ todoMiddleSprites todo)
-        mapM_ dgfx (Map.elems $ todoFrontSprites todo)
-        liftIO $ SDL.flip (screen foundation)
+        let ranger loc _ = inRange foundation loc
+        mapM_ dgfx (Map.elems . Map.filterWithKey ranger $ todoBackSprites todo)
+        mapM_ dgfx (Map.elems . Map.filterWithKey ranger $ todoMiddleSprites todo)
+        mapM_ dgfx (Map.elems . Map.filterWithKey ranger $ todoFrontSprites todo)
+        liftIO $ SDL.flip screen
         endTick <- SDL.getTicks
         let diff = endTick - startTick
         when (diff < 16) (SDL.delay $ 16 - diff)
         if elem Quit inps'
-            then return state''
-            else loop state''
+        then return state''
+        else loop state''
     void $ RWS.execRWST (unGridLand onEnd) foundation endState
     end foundation common
+
+inRange :: Foundation -> Location -> Bool
+inRange Foundation{..} Location{..} = locX >= 0 && locY >= 0 && locX < cols && locY < rows
 
 start :: Config -> IO Foundation
 start Config{..} = do
@@ -454,7 +487,7 @@ start Config{..} = do
     SDL.setCaption "Grid Land" ""
     SDL.enableUnicode True
     colorMap <- getColorMap screen
-    ttfOk <- TTF.init
+    -- ttfOk <- TTF.init
     Mixer.openAudio 22050 Mixer.AudioS16Sys 2 4096
     return $ Foundation screen colorMap cfgRows cfgCols cfgTileSize
 
@@ -466,24 +499,24 @@ getColorMap s = do
     return $ \c -> table V.! (fromEnum c)
 
 newCommon :: Common
-newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing []
+newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing [] (Location 0 0)
 
 end :: Foundation -> Common -> IO ()
 end Foundation{..} Common{..} = do
     mapM_ SDL.freeSurface (Map.elems bkdImages)
     mapM_ (mapM_ SDL.freeSurface . V.toList) (Map.elems sprites)
     mapM_ Mixer.freeMusic (Map.elems musics)
-    mapM_ (const $ return ()) (Map.elems sfxs) -- Mixer.freeChunks is missing a binding
+    mapM_ (const $ return ()) (Map.elems sfxs) -- Mixer.freeChunks is missing its binding
     SDL.freeSurface screen
     Mixer.closeAudio
-    TTF.quit
+    -- TTF.quit
     SDL.quit
 
 putStrLn' :: String -> GridLand a ()
 putStrLn' = liftIO . putStrLn
 
 print' :: Show b => b -> GridLand a ()
-print' = liftIO . print 
+print' = liftIO . print
 
 titleBar :: String -> GridLand a ()
 titleBar title = liftIO $ SDL.setCaption title ""
