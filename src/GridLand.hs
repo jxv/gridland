@@ -128,7 +128,7 @@ loadSpriteStretch path stretch = do
                         (tr, tg, tb) = colorValue color
                         (cr, cg, cb) = fromColor32 v
                         (r, g, b) = (shiftR tr 1 + shiftR cr 1, shiftR tg 1 + shiftR cg 1, shiftR tb 1 + shiftR cb 1)
-                        tinted = toColor32 r g b
+                        tinted = toColor32' r g b
                         (SDL.Pixel p) = colorToPixel color
                         in SDL.Pixel $ if 0x00ff00ff == v .&. 0x00ffffff
                             then 0x00ff00ff
@@ -321,6 +321,13 @@ toColor32 r g b =
     shiftL (fromIntegral b) (2 * 8) .|.
     shiftL (fromIntegral g) 8 .|.
     (fromIntegral r)
+
+toColor32' :: Word8 -> Word8 -> Word8 -> Word32
+toColor32' r g b =
+    shiftL 0xff (3 * 8) .|.
+    shiftL (fromIntegral r) (2 * 8) .|.
+    shiftL (fromIntegral g) 8 .|.
+    (fromIntegral b)
 
 colorValue :: Integral a => Color -> (a, a, a)
 colorValue = \case

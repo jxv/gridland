@@ -28,7 +28,7 @@ update :: GridLand App Bool
 update = do
     app <- getData
     mpos <- getMousePosition
-    drawSpriteFront (sprite app) NoFilter mpos (angle app)
+    drawSpriteFront (sprite app) (Tint Red) mpos (angle app)
     let (Degrees d) = angle app
     inputs <- getInputs
     let loc = move (location app) inputs
