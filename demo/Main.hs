@@ -7,33 +7,41 @@ main :: IO ()
 main = runGridLand cfg start update end
 
 cfg :: Config
-cfg = Config { cfgRows = 20, cfgCols = 32, cfgTileSize = 32 }
+cfg = Config { cfgRows = 10, cfgCols = 12, cfgTileSize = 80 }
 
 data App = App {
-    sprite :: Sprite,
+    fluffy :: Sprite,
+    cocoa :: Sprite,
     angle :: Angle,
     location :: Location
 }
 
 start :: GridLand () App
 start = do
-    bkgImg <- loadBackdropImage "data/image.bmp"
+    titleBar "The Adventures of Cocoa & Fluffy"
+    bkgImg <- loadBackdropImage "data/bg.jpg"
     backdrop bkgImg
-    sprite <- loadSprite "data/boulder.png"
+    cocoaSprite <- loadSprite "data/cocoa.png"
+    fluffySprite <- loadSprite "data/lion.png"
     music <- loadMusic "data/amen_break.wav"
     playMusic music Nothing
-    return App{ sprite = sprite, angle = Degrees 0, location = Location 0 0}
+    return App {
+            fluffy = fluffySprite,
+            cocoa = cocoaSprite,
+            angle = Degrees 0,
+            location = Location 0 0
+        }
 
 update :: GridLand App Bool
 update = do
     app <- getData
     mpos <- getMousePosition
-    drawSpriteFront (sprite app) (Tint Red) mpos (angle app)
+    drawSpriteFront (cocoa app) (Tint LightBlue) mpos (angle app)
+    drawSpriteBack (fluffy app) (Tint Yellow) (location app) (angle app)
     let (Degrees d) = angle app
     inputs <- getInputs
     let loc = move (location app) inputs
-    print' mpos
-    putData app{ angle = Degrees (d + 1), location = mpos }
+    putData app{ angle = Degrees (d + 1), location = loc }
     return True
 
 move :: Location -> [Input] -> Location

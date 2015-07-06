@@ -15,6 +15,7 @@ module GridLand
     , Sfx
     , Music
     , GridLand
+    , titleBar
     , loadSprite
     , loadSpriteStretch
     , loadBackdropImage
