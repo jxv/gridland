@@ -126,7 +126,7 @@ loadSpriteStretch path stretch = do
                     NoFilter -> SDL.Pixel v
                     Tint color -> let
                         (tr, tg, tb) = colorValue color
-                        (cr, cg, cb) = fromColor32 v
+                        (cr, cg, cb) = fromColor32' v
                         (r, g, b) = (shiftR tr 1 + shiftR cr 1, shiftR tg 1 + shiftR cg 1, shiftR tb 1 + shiftR cb 1)
                         tinted = toColor32' r g b
                         (SDL.Pixel p) = colorToPixel color
@@ -314,6 +314,13 @@ fromColor32 c =
     (fromIntegral ((shiftR c (2 * 8)) .&. 0xff),
      fromIntegral ((shiftR c 8) .&. 0xff),
      fromIntegral (c .&. 0xff))
+
+fromColor32' :: Word32 -> (Word8, Word8, Word8)
+fromColor32' c =
+    (fromIntegral (c .&. 0xff),
+     fromIntegral ((shiftR c 8) .&. 0xff),
+     fromIntegral ((shiftR c (2 * 8)) .&. 0xff))
+
 
 toColor32 :: Word8 -> Word8 -> Word8 -> Word32
 toColor32 r g b =

@@ -29,4 +29,3 @@ import Control.Monad.RWS as X (RWS, RWST, MonadState, MonadReader, MonadWriter, 
 import Data.Vector as X (Vector)
 -- import Data.List
 import Data.Array as X (Array)
-
