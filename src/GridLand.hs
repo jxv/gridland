@@ -106,7 +106,8 @@ mapRGB = SDL.mapRGB . SDL.surfaceGetPixelFormat
 
 colorToPixel :: Color -> SDL.Pixel
 colorToPixel color = let
-    (r,g,b) = colorValue color
+    (r',g,b') = colorValue color
+    (r,b) = (b',r')
     v = shiftL 0xff (8 * 3)  .|. shiftL (fromIntegral b) (8 * 2) .|. shiftL (fromIntegral g) (8 * 1) .|. (fromIntegral r)
     in SDL.Pixel v
 
@@ -130,7 +131,6 @@ loadSpriteStretch path stretch = do
                         (cr, cg, cb) = fromColor32' v
                         (r, g, b) = (shiftR tr 1 + shiftR cr 1, shiftR tg 1 + shiftR cg 1, shiftR tb 1 + shiftR cb 1)
                         tinted = toColor32' r g b
-                        (SDL.Pixel p) = colorToPixel color
                         in SDL.Pixel $ if 0x00ff00ff == v .&. 0x00ffffff
                             then 0x00ff00ff
                             else tinted
@@ -460,7 +460,7 @@ establishPlayingMusic = do
     unless isPlaying $ RWS.modify . first $ (\s -> s { playingMusic = Nothing } )
 
 -- | Config -> Start -> Update -> End -> IO ()
-runGridLand :: Config -> GridLand () a -> GridLand a Bool -> GridLand a () -> IO ()
+runGridLand :: Config -> GridLand () a -> GridLand a () -> GridLand a () -> IO ()
 runGridLand cfg onStart onUpdate onEnd = do
     foundation@Foundation{..} <- start cfg
     let common = newCommon
