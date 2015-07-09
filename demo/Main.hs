@@ -7,7 +7,7 @@ main :: IO ()
 main = runGridLand cfg start update (return ())
 
 cfg :: Config
-cfg = Config { cfgRows = 9, cfgCols = 12, cfgTileSize = 80 }
+cfg = Config { cfgRows = 8 * 2, cfgCols = 16 * 2, cfgTileSize = 40 }
 
 -- App :: Sprite -> Sprite -> Angle -> Location -> App
 data App = App {
@@ -21,7 +21,7 @@ data App = App {
 start :: GridLand () App
 start = do
     titleBar "The Adventures of Cocoa & Fluffy"
-    bkgImg <- loadBackdropImage "data/image.bmp"
+    bkgImg <- loadBackdropImage "data/space.jpg"
     backdrop bkgImg
     cocoaSprite <- loadSprite "data/cocoa.png"
     fluffySprite <- loadSprite "data/lion.png"
