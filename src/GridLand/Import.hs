@@ -6,6 +6,7 @@ import Data.Functor as X
 import Control.Monad as X
 import Control.Monad.Trans as X
 import Control.Monad.Fix as X
+import Data.Monoid as X
 import Control.Applicative as X
 import Control.Arrow as X
 import Foreign as X hiding (void)
