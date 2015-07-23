@@ -1,6 +1,6 @@
 module Main where
 
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import GridLand
 
 main :: IO ()
@@ -14,7 +14,9 @@ data App = App {
     cocoa :: Sprite,
     angle :: Angle, -- Degrees
     cocoaLocations :: [Location],
-    fluffyLocations :: [Location]
+    fluffyLocations :: [Location],
+    oops :: Sfx,
+    laser :: Sfx
 }
 
 start :: GridLand () App
@@ -26,12 +28,16 @@ start = do
     fluffySprite <- loadSprite "data/lion.png"
     music <- loadMusic "data/amen_break.wav"
     playMusic music Nothing
+    oopsSfx <- loadSfx "data/oops.wav"
+    laserSfx <- loadSfx "data/laser.wav"
     return App {
             fluffy = fluffySprite,
             cocoa = cocoaSprite,
             angle = Degrees 0,
             cocoaLocations = replicate 20 (Location 0 0),
-            fluffyLocations = replicate 50 (Location 0 0)
+            fluffyLocations = replicate 50 (Location 0 0),
+            oops = oopsSfx,
+            laser = laserSfx
         }
 
 update :: GridLand App ()
@@ -39,6 +45,7 @@ update = do
     updateAngle
     updateCocoas
     updateFluffies
+    updateSfx
 
 updateAngle :: GridLand App ()
 updateAngle = do
@@ -81,3 +88,9 @@ move loc inputs =
     then Location (locX loc + 1) (locY loc)
     else loc
 
+updateSfx :: GridLand App ()
+updateSfx = do
+    app <- getData
+    inputs <- getInputs
+    when (elem (Key (Char 'a') Pressed) inputs) (playSfx (oops app))
+    when (elem (Key (Char 'f') Pressed) inputs) (playSfx (laser app))

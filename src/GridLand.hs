@@ -27,6 +27,8 @@ module GridLand
     , playMusic
     , stopMusic
     , stopAllMusic
+    , loadSfx
+    , playSfx
     , print'
     , putStrLn'
     , runGridLand
@@ -459,6 +461,24 @@ establishPlayingMusic = do
     isPlaying <- liftIO Mixer.playingMusic
     unless isPlaying $ RWS.modify . first $ (\s -> s { playingMusic = Nothing } )
 
+loadSfx :: FilePath -> GridLand a Sfx
+loadSfx path = do
+    sfxRef <- liftIO $ Mixer.loadWAV path
+    key <- RWS.gets (Map.size . sfxs . fst)
+    let sfx = Sfx key
+    RWS.modify . first $ \s -> s { sfxs = Map.insert sfx sfxRef (sfxs s) }
+    return sfx
+
+playSfx :: Sfx -> GridLand a ()
+playSfx sfx = do
+    chunk <- RWS.gets ((Map.! sfx) . sfxs . fst)
+    chan <- RWS.gets (currSfxChan . fst)
+    void . liftIO $ Mixer.playChannel chan chunk 0
+    RWS.modify . first $ \s -> s { currSfxChan  = mod (chan + 1) sfxChannels }
+
+sfxChannels :: Int
+sfxChannels = 16
+
 -- | Config -> Start -> Update -> End -> IO ()
 runGridLand :: Config -> GridLand () a -> GridLand a () -> GridLand a () -> IO ()
 runGridLand cfg onStart onUpdate onEnd = do
@@ -504,6 +524,7 @@ start Config{..} = do
     colorMap <- getColorMap screen
     -- ttfOk <- TTF.init
     Mixer.openAudio 22050 Mixer.AudioS16Sys 2 4096
+    Mixer.allocateChannels sfxChannels
     return $ Foundation screen colorMap cfgRows cfgCols cfgTileSize
 
 getColorMap :: SDL.Surface -> IO (Color -> SDL.Pixel)
@@ -514,7 +535,7 @@ getColorMap s = do
     return $ \c -> table V.! (fromEnum c)
 
 newCommon :: Common
-newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing [] (Location 0 0)
+newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing [] (Location 0 0) 0
 
 end :: Foundation -> Common -> IO ()
 end Foundation{..} Common{..} = do

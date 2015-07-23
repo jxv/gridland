@@ -116,7 +116,8 @@ data Common = Common {
     currBkd :: Backdrop,
     playingMusic :: Maybe Music,
     inputs :: [Input],
-    mousePosition :: Location
+    mousePosition :: Location,
+    currSfxChan :: Int
 }
 
 data Todo = Todo {
