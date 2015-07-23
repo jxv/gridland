@@ -9,11 +9,10 @@ main = runGridLand cfg start update (return ())
 cfg :: Config
 cfg = Config { cfgRows = 8 * 2, cfgCols = 16 * 2, cfgTileSize = 40 }
 
--- App :: Sprite -> Sprite -> Angle -> Location -> App
 data App = App {
     fluffy :: Sprite,
     cocoa :: Sprite,
-    angle :: Angle, -- Degrees, Radians,
+    angle :: Angle, -- Degrees
     cocoaLocations :: [Location],
     fluffyLocations :: [Location]
 }

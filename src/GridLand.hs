@@ -128,7 +128,7 @@ loadSpriteStretch path stretch = do
                     NoFilter -> SDL.Pixel v
                     Tint color -> let
                         (tr, tg, tb) = colorValue color
-                        (cr, cg, cb) = fromColor32' v
+                        (cr, cg, cb) = fromColor32 v
                         (r, g, b) = (shiftR tr 1 + shiftR cr 1, shiftR tg 1 + shiftR cg 1, shiftR tb 1 + shiftR cb 1)
                         tinted = toColor32' r g b
                         in SDL.Pixel $ if 0x00ff00ff == v .&. 0x00ffffff
@@ -250,8 +250,8 @@ pollInputs foundation = do
         SDL.SDLK_RSHIFT -> pressed Shift : inputs
         SDL.SDLK_LCTRL -> pressed Ctrl : inputs
         SDL.SDLK_RCTRL -> pressed Ctrl : inputs
-        SDL.SDLK_LALT -> pressed Alt : inputs
-        SDL.SDLK_RALT -> pressed Alt : inputs
+        SDL.SDLK_LALT -> pressed AltKey : inputs
+        SDL.SDLK_RALT -> pressed AltKey : inputs
         SDL.SDLK_TAB-> pressed Tab : inputs
         SDL.SDLK_BACKSPACE -> pressed Backspace : inputs
         SDL.SDLK_LSUPER -> pressed Meta : inputs
@@ -271,8 +271,8 @@ pollInputs foundation = do
         SDL.SDLK_RSHIFT -> released Shift : inputs
         SDL.SDLK_LCTRL -> released Ctrl : inputs
         SDL.SDLK_RCTRL -> released Ctrl : inputs
-        SDL.SDLK_LALT -> released Alt : inputs
-        SDL.SDLK_RALT -> released Alt : inputs
+        SDL.SDLK_LALT -> released AltKey : inputs
+        SDL.SDLK_RALT -> released AltKey : inputs
         SDL.SDLK_TAB-> released Tab : inputs
         SDL.SDLK_BACKSPACE -> released Backspace : inputs
         SDL.SDLK_LSUPER -> released Meta : inputs

@@ -10,7 +10,6 @@ import qualified Graphics.UI.SDL.Image as Image
 --import qualified Graphics.UI.SDL.TTF as TTF
 -- SDL-mixer
 import qualified Graphics.UI.SDL.Mixer as Mixer
-import Data.Monoid
 
 data Config = Config {
     cfgRows :: Int,
@@ -61,7 +60,7 @@ data Key
     | Enter
     | Shift
     | Ctrl
-    | Alt
+    | AltKey
     | Tab
     | Backspace
     | Meta
