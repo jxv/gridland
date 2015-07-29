@@ -117,7 +117,8 @@ data Common = Common {
     playingMusic :: Maybe Music,
     inputs :: [Input],
     mousePosition :: Location,
-    currSfxChan :: Int
+    currSfxChan :: Int,
+    pathPrefix :: FilePath
 }
 
 data Todo = Todo {
@@ -126,6 +127,14 @@ data Todo = Todo {
     todoBackSprites :: Map Location Gfx,
     todoBackdrop :: Backdrop
 }
+
+-- The SDL bindings lacks the appropriate R/W to deal directly with its PixelFormat struct
+data PixelFormat
+    = RGBA
+    | BGRA
+    | ARGB
+    | ABGR
+    deriving (Show, Eq)
 
 newtype GridLand a b = GridLand { unGridLand :: RWST Foundation Todo(Common, a) IO b }
     deriving

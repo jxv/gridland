@@ -48,6 +48,7 @@ import Data.IORef
 import Data.Char
 import Data.Maybe
 import Control.Arrow
+import System.Environment
 -- SDL
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Video as SDL
@@ -114,45 +115,122 @@ colorToPixel color = let
     in SDL.Pixel v
 
 loadSpriteStretch :: FilePath -> Stretch -> GridLand a Sprite
-loadSpriteStretch path stretch = do
+loadSpriteStretch rawPath stretch = do
+    path <- correctPath rawPath
     base <- liftIO $ Image.load path >>= SDL.displayFormat >>= setColorKey (0xff,0x00,0xff)
     let (w,h) = (SDL.surfaceGetWidth base, SDL.surfaceGetHeight base)
     let side = max w h
     ts <- RWS.asks tileSize
     let zoom = (fromIntegral ts) / (fromIntegral side)
-    let blit (cf, theta) = do
-            rotozoom <- Gfx.rotozoom base (fromIntegral theta) zoom (stretch == Smooth)
-            ping <- SDL.displayFormat rotozoom >>= setColorKey (0xff, 0x00, 0xff)
-            pong <- setColorKey (0xff, 0x00, 0xff) rotozoom
-            let (w,h) = (SDL.surfaceGetWidth rotozoom, SDL.surfaceGetHeight rotozoom)
-            let fmt = SDL.surfaceGetPixelFormat rotozoom
-            let cfFn v = case cf of
-                    NoFilter -> SDL.Pixel v
-                    Tint color -> let
-                        (tr, tg, tb) = colorValue color
-                        (cr, cg, cb) = fromColor32 v
-                        (r, g, b) = (shiftR tr 1 + shiftR cr 1, shiftR tg 1 + shiftR cg 1, shiftR tb 1 + shiftR cb 1)
-                        tinted = toColor32' r g b
-                        in SDL.Pixel $ if 0x00ff00ff == v .&. 0x00ffffff
-                            then 0x00ff00ff
-                            else tinted
-                    Replace color -> let
-                        (SDL.Pixel p) = colorToPixel color
-                        in SDL.Pixel $ if 0x00ff00ff == v .&. 0x00ffffff
-                            then 0x00ff00ff
-                            else p
-            forM_ ([(x,y) | x <- [0 .. w - 1], y <- [0 .. h - 1]]) $ \(x,y) -> do
-                (SDL.Pixel v) <- getPixel32 x y ping
-                putPixel32 x y (cfFn v) pong
-            SDL.freeSurface ping
-            return pong
-    frames <- liftIO $ mapM blit spriteOpts
+    fmt <- io (surfacePixelFormat base)
+    let blitter = blit stretch base zoom
+    frames <- liftIO $ mapM (\(cf, theta) -> blitter (mapFilterColor fmt cf) theta) spriteOpts
     liftIO $ SDL.freeSurface base
     let spriteFrames = V.fromListN totalFrames frames
     key <- RWS.gets (Map.size . sprites . fst)
     let spr = Sprite key
     RWS.modify . first $ \s -> s { sprites = Map.insert spr spriteFrames (sprites s) }
     return spr
+
+blit
+    :: Stretch
+    -> SDL.Surface
+    -> Double
+    -> (Word32 -> SDL.Pixel)
+    -> Int
+    -> IO SDL.Surface
+blit stretch base zoom toPixel theta = do
+    rotozoom <- Gfx.rotozoom base (fromIntegral theta) zoom (stretch == Smooth)
+    ping <- SDL.displayFormat rotozoom >>= setColorKey (0xff, 0x00, 0xff)
+    pong <- setColorKey (0xff, 0x00, 0xff) rotozoom
+    let (w,h) = (SDL.surfaceGetWidth rotozoom, SDL.surfaceGetHeight rotozoom)
+    let fmt = SDL.surfaceGetPixelFormat rotozoom
+    forM_ ([(x,y) | x <- [0 .. w - 1], y <- [0 .. h - 1]]) $ \(x,y) -> do
+        (SDL.Pixel v) <- getPixel32 x y ping
+        putPixel32 x y (toPixel v) pong
+    SDL.freeSurface ping
+    return pong
+
+mapFilterColor :: PixelFormat -> ColorFilter -> Word32 -> SDL.Pixel
+mapFilterColor RGBA = filterColorRGBA
+mapFilterColor BGRA = filterColorBGRA
+mapFilterColor ARGB = filterColorARGB
+mapFilterColor ABGR = filterColorABGR
+
+filterColorABGR :: ColorFilter -> Word32 -> SDL.Pixel
+filterColorABGR = mkFilterColor toColorABGR32 fromColorABGR32 0xff000000
+
+filterColorARGB :: ColorFilter -> Word32 -> SDL.Pixel
+filterColorARGB = mkFilterColor toColorARGB32 fromColorARGB32 0xff000000
+
+filterColorRGBA :: ColorFilter -> Word32 -> SDL.Pixel
+filterColorRGBA = mkFilterColor toColorRGBA32 fromColorRGBA32 0x000000ff
+
+filterColorBGRA :: ColorFilter -> Word32 -> SDL.Pixel
+filterColorBGRA = mkFilterColor toColorBGRA32 fromColorBGRA32 0x000000ff
+
+mkFilterColor
+    :: (Word8 -> Word8 -> Word8 -> Word32)
+    -> (Word32 -> (Word8, Word8, Word8))
+    -> Word32
+    -> ColorFilter
+    -> Word32
+    -> SDL.Pixel
+mkFilterColor toColor fromColor transMask = let
+    magenta = toColor 0xff 0x00 0xff
+    white = toColor 0xff 0xff 0xff
+    trans = xor magenta transMask
+    in filterColor toColor fromColor white magenta trans
+
+filterColor
+    :: (Word8 -> Word8 -> Word8 -> Word32)
+    -> (Word32 -> (Word8, Word8, Word8))
+    -> Word32
+    -> Word32
+    -> Word32
+    -> ColorFilter
+    -> Word32
+    -> SDL.Pixel
+filterColor _ _ _ _ _ NoFilter v = SDL.Pixel v
+filterColor toColor fromColor white magenta trans (Tint color) v = let
+    (cr, cg, cb) = fromColor v
+    (tr, tg, tb) = colorValue color
+    (r, g, b) = (shiftR tr 1 + shiftR cr 1, shiftR tg 1 + shiftR cg 1, shiftR tb 1 + shiftR cb 1)
+    tinted = toColor r g b
+    in SDL.Pixel $ if magenta == toColor cr cg cb .&. white
+        then trans
+        else tinted
+filterColor toColor fromColor white magenta trans (Replace color) v = let
+    (cr, cg, cb) = fromColor v
+    (r, g, b) = colorValue color
+    p = toColor r g b
+    in SDL.Pixel $ if magenta == (toColor cr cg cb) .&. white
+        then trans
+        else p
+
+-- This is a necessary hack because the SDL bindings are insufficient
+surfacePixelFormat :: SDL.Surface -> IO PixelFormat
+surfacePixelFormat sur = do
+    let fmt = SDL.surfaceGetPixelFormat sur
+    rShift <- pixelFormatGetRShift fmt
+    bShift <- pixelFormatGetBShift fmt
+    gShift <- pixelFormatGetGShift fmt
+    aShift <- pixelFormatGetAShift fmt
+    return $ case (rShift, gShift, bShift, aShift) of
+        ( 0,  8, 16, 24) -> ABGR
+        (16,  8,  0, 24) -> ARGB
+        (24, 16,  8,  0) -> RGBA
+        ( 8, 16, 24,  0) -> BGRA
+        _ -> ABGR -- default
+
+correctPath :: FilePath -> GridLand a FilePath
+correctPath "" = RWS.gets (pathPrefix . fst)
+correctPath path =
+    if head path == '/'
+    then return path
+    else do
+        prefix <- RWS.gets (pathPrefix . fst)
+        return $ prefix ++ path
 
 loadSprite :: FilePath -> GridLand a Sprite
 loadSprite path = loadSpriteStretch path Pixelated
@@ -174,17 +252,35 @@ copyFromSurface sur = do
     aMask <- if elem SDL.SrcColorKey flags then return 0 else pixelFormatGetAMask fmt
     SDL.createRGBSurface [SDL.SWSurface] (SDL.surfaceGetWidth sur) (SDL.surfaceGetHeight sur) bpp rMask gMask bMask aMask
 
-pixelFormatGetRMask :: SDL.PixelFormat -> IO Word32
-pixelFormatGetRMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 16
+pixelFormatGetBytes :: Storable a => Int -> SDL.PixelFormat -> IO a
+pixelFormatGetBytes offset fmt = withForeignPtr fmt (\ptr -> peekByteOff ptr offset)
 
-pixelFormatGetGMask :: SDL.PixelFormat -> IO Word32
-pixelFormatGetGMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 20
+pixelFormatGetRShift, pixelFormatGetGShift, pixelFormatGetBShift, pixelFormatGetAShift :: SDL.PixelFormat -> IO Word8
+-- 64 bit
+pixelFormatGetRShift = pixelFormatGetBytes 14
+pixelFormatGetGShift = pixelFormatGetBytes 15
+pixelFormatGetBShift = pixelFormatGetBytes 16
+pixelFormatGetAShift = pixelFormatGetBytes 17
+{- 32 bit
+pixelFormatGetRShift = pixelFormatGetBytes 10
+pixelFormatGetGShift = pixelFormatGetBytes 11
+pixelFormatGetBShift = pixelFormatGetBytes 12
+pixelFormatGetAShift = pixelFormatGetBytes 13
+-}
 
-pixelFormatGetBMask :: SDL.PixelFormat -> IO Word32
-pixelFormatGetBMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 24
+pixelFormatGetRMask, pixelFormatGetGMask, pixelFormatGetBMask, pixelFormatGetAMask :: SDL.PixelFormat -> IO Word32
+-- 64 bit
+pixelFormatGetRMask = pixelFormatGetBytes 20
+pixelFormatGetGMask = pixelFormatGetBytes 24
+pixelFormatGetBMask = pixelFormatGetBytes 28
+pixelFormatGetAMask = pixelFormatGetBytes 32
+{- 32 bit
+pixelFormatGetRMask = pixelFormatGetBytes 16
+pixelFormatGetGMask = pixelFormatGetBytes 20
+pixelFormatGetBMask = pixelFormatGetBytes 24
+pixelFormatGetAMask = pixelFormatGetBytes 28
+-}
 
-pixelFormatGetAMask :: SDL.PixelFormat -> IO Word32
-pixelFormatGetAMask format = withForeignPtr format $ \hsc_ptr -> peekByteOff hsc_ptr 28
 
 getPixel32 :: Int -> Int -> SDL.Surface -> IO SDL.Pixel
 getPixel32 x y s = do
@@ -197,7 +293,8 @@ putPixel32 x y (SDL.Pixel pixel) s = do
     pokeElemOff pixels ((y * SDL.surfaceGetWidth s) + x) pixel
 
 loadBackdropImageStretch :: FilePath -> Stretch -> GridLand a Backdrop
-loadBackdropImageStretch path stretch = do
+loadBackdropImageStretch rawPath stretch = do
+    path <- correctPath rawPath
     base <- liftIO $ Image.load path
     scr <- RWS.asks screen
     let (scrW,scrH) = (SDL.surfaceGetWidth scr, SDL.surfaceGetHeight scr)
@@ -312,32 +409,57 @@ pressed = flip Key Pressed
 released :: Key -> Input
 released = flip Key Released
 
-fromColor32 :: Word32 -> (Word8, Word8, Word8)
-fromColor32 c =
+fromColorARGB32 :: Word32 -> (Word8, Word8, Word8)
+fromColorARGB32 c =
     (fromIntegral ((shiftR c (2 * 8)) .&. 0xff),
      fromIntegral ((shiftR c 8) .&. 0xff),
      fromIntegral (c .&. 0xff))
 
-fromColor32' :: Word32 -> (Word8, Word8, Word8)
-fromColor32' c =
+fromColorABGR32 :: Word32 -> (Word8, Word8, Word8)
+fromColorABGR32 c =
     (fromIntegral (c .&. 0xff),
      fromIntegral ((shiftR c 8) .&. 0xff),
      fromIntegral ((shiftR c (2 * 8)) .&. 0xff))
 
+fromColorRGBA32 :: Word32 -> (Word8, Word8, Word8)
+fromColorRGBA32 c =
+    (fromIntegral ((shiftR c (3 * 8)) .&. 0xff),
+     fromIntegral ((shiftR c (2 * 8)) .&. 0xff),
+     fromIntegral ((shiftR c 8) .&. 0xff))
 
-toColor32 :: Word8 -> Word8 -> Word8 -> Word32
-toColor32 r g b =
+fromColorBGRA32 :: Word32 -> (Word8, Word8, Word8)
+fromColorBGRA32 c =
+    (fromIntegral ((shiftR c 8) .&. 0xff),
+     fromIntegral ((shiftR c (2 * 8)) .&. 0xff),
+     fromIntegral ((shiftR c (3 * 8)) .&. 0xff))
+
+toColorABGR32 :: Word8 -> Word8 -> Word8 -> Word32
+toColorABGR32 r g b =
     shiftL 0xff (3 * 8) .|.
     shiftL (fromIntegral b) (2 * 8) .|.
     shiftL (fromIntegral g) 8 .|.
     (fromIntegral r)
 
-toColor32' :: Word8 -> Word8 -> Word8 -> Word32
-toColor32' r g b =
+toColorARGB32 :: Word8 -> Word8 -> Word8 -> Word32
+toColorARGB32 r g b =
     shiftL 0xff (3 * 8) .|.
     shiftL (fromIntegral r) (2 * 8) .|.
     shiftL (fromIntegral g) 8 .|.
     (fromIntegral b)
+
+toColorBGRA32 :: Word8 -> Word8 -> Word8 -> Word32
+toColorBGRA32 r g b =
+    shiftL (fromIntegral b) (3 * 8) .|.
+    shiftL (fromIntegral g) (2 * 8) .|.
+    shiftL (fromIntegral r) 8 .|.
+    0xff
+
+toColorRGBA32 :: Word8 -> Word8 -> Word8 -> Word32
+toColorRGBA32 r g b =
+    shiftL (fromIntegral r) (3 * 8) .|.
+    shiftL (fromIntegral g) (2 * 8) .|.
+    shiftL (fromIntegral b) 8 .|.
+    0xff
 
 colorValue :: Integral a => Color -> (a, a, a)
 colorValue = \case
@@ -424,7 +546,8 @@ drawGfx scr ts Gfx{..} = do
     void $ SDL.blitSurface gfxSurface tileRect scr (Just $ gfxRect ts gfxLocation gfxSurface)
 
 loadMusic :: FilePath -> GridLand a Music
-loadMusic (path) = do
+loadMusic rawPath = do
+    path <- correctPath rawPath
     mus <- liftIO $ Mixer.loadMUS path
     key <- RWS.gets (Map.size . musics . fst)
     let music = Music key
@@ -462,7 +585,8 @@ establishPlayingMusic = do
     unless isPlaying $ RWS.modify . first $ (\s -> s { playingMusic = Nothing } )
 
 loadSfx :: FilePath -> GridLand a Sfx
-loadSfx path = do
+loadSfx rawPath = do
+    path <- correctPath rawPath
     sfxRef <- liftIO $ Mixer.loadWAV path
     key <- RWS.gets (Map.size . sfxs . fst)
     let sfx = Sfx key
@@ -482,8 +606,11 @@ sfxChannels = 16
 -- | Config -> Start -> Update -> End -> IO ()
 runGridLand :: Config -> GridLand () a -> GridLand a () -> GridLand a () -> IO ()
 runGridLand cfg onStart onUpdate onEnd = do
+    execPath <- getExecutablePath
+    progName <- getProgName
+    let pathPrefix = take (length execPath - length progName) execPath
     foundation@Foundation{..} <- start cfg
-    let common = newCommon
+    let common = newCommon { pathPrefix = pathPrefix }
     (initUserData, (initCommon,_), _) <- RWS.runRWST (unGridLand onStart) foundation (common, ())
     let initState = (initCommon, initUserData)
     let update = establishPlayingMusic >> onUpdate >> drawBackdrop
@@ -535,7 +662,7 @@ getColorMap s = do
     return $ \c -> table V.! (fromEnum c)
 
 newCommon :: Common
-newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing [] (Location 0 0) 0
+newCommon = Common Map.empty Map.empty Map.empty Map.empty (BkdColor White) Nothing [] (Location 0 0) 0 ""
 
 end :: Foundation -> Common -> IO ()
 end Foundation{..} Common{..} = do
