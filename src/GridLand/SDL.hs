@@ -47,13 +47,13 @@ pixelFormatGetBytes :: Storable a => Int -> SDL.PixelFormat -> IO a
 pixelFormatGetBytes offset fmt = withForeignPtr fmt (\ptr -> peekByteOff ptr offset)
 
 pixelFormatGetRShift, pixelFormatGetGShift, pixelFormatGetBShift, pixelFormatGetAShift :: SDL.PixelFormat -> IO Word8
-#ifdef BIT_64
+#ifdef ARCH_64
 pixelFormatGetRShift = pixelFormatGetBytes 14
 pixelFormatGetGShift = pixelFormatGetBytes 15
 pixelFormatGetBShift = pixelFormatGetBytes 16
 pixelFormatGetAShift = pixelFormatGetBytes 17
 #endif
-#ifdef BIT_32
+#ifdef ARCH_32
 pixelFormatGetRShift = pixelFormatGetBytes 10
 pixelFormatGetGShift = pixelFormatGetBytes 11
 pixelFormatGetBShift = pixelFormatGetBytes 12
@@ -61,13 +61,13 @@ pixelFormatGetAShift = pixelFormatGetBytes 13
 #endif
 
 pixelFormatGetRMask, pixelFormatGetGMask, pixelFormatGetBMask, pixelFormatGetAMask :: SDL.PixelFormat -> IO Word32
-#ifdef BIT_64
+#ifdef ARCH_64
 pixelFormatGetRMask = pixelFormatGetBytes 20
 pixelFormatGetGMask = pixelFormatGetBytes 24
 pixelFormatGetBMask = pixelFormatGetBytes 28
 pixelFormatGetAMask = pixelFormatGetBytes 32
 #endif
-#ifdef BIT_32
+#ifdef ARCH_32
 pixelFormatGetRMask = pixelFormatGetBytes 16
 pixelFormatGetGMask = pixelFormatGetBytes 20
 pixelFormatGetBMask = pixelFormatGetBytes 24
