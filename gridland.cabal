@@ -1,5 +1,5 @@
 name:                gridland
-version:             0.1.0.2
+version:             0.1.0.3
 synopsis:            Grid-based multimedia engine
 description:         Learn Haskell by drawing sprites and playing music and sound effects.
 license:             MIT
@@ -26,7 +26,10 @@ library
   other-modules:
     GridLand.Import
     GridLand.Data
-  -- other-extensions:
+    GridLand.SDL
+    GridLand.Color
+  other-extensions:
+    CPP
   default-extensions:
     RecordWildCards
     LambdaCase
@@ -52,6 +55,10 @@ library
     safe
   hs-source-dirs: src
   default-language: Haskell2010
+  if arch(i386)
+    cpp-options: -DBIT_32
+  if arch(x86_64)
+    cpp-options: -DBIT_64
 
 executable demo
   main-is: Main.hs

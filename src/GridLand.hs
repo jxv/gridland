@@ -42,43 +42,34 @@ module GridLand
     , getMousePosition
     ) where
 
--- base
+import qualified Graphics.UI.SDL as SDL
+import qualified Graphics.UI.SDL.Video as SDL
+import qualified Graphics.UI.SDL.Image as Image
+-- import qualified Graphics.UI.SDL.TTF as TTF
+import qualified Graphics.UI.SDL.Mixer as Mixer
+import qualified Graphics.UI.SDL.Framerate as Gfx
+import qualified Graphics.UI.SDL.Primitives as Gfx
+import qualified Graphics.UI.SDL.Rotozoomer as Gfx
+import qualified Data.Map as Map
+import qualified Data.Set as Set
+import qualified Math.Geometry.Grid as Grid
+import qualified Data.Vector as V
+import qualified Control.Monad.State as State
+import qualified Control.Monad.RWS as RWS
+import qualified Data.Array as Array
+import qualified Safe as Safe
+
 import Debug.Trace
 import Data.IORef
 import Data.Char
 import Data.Maybe
 import Control.Arrow
 import System.Environment
--- SDL
-import qualified Graphics.UI.SDL as SDL
-import qualified Graphics.UI.SDL.Video as SDL
--- SDL-image
-import qualified Graphics.UI.SDL.Image as Image
--- SDL-ttf (unused)
--- import qualified Graphics.UI.SDL.TTF as TTF
--- SDL-mixer
-import qualified Graphics.UI.SDL.Mixer as Mixer
--- SDL-gfx
-import qualified Graphics.UI.SDL.Framerate as Gfx
-import qualified Graphics.UI.SDL.Primitives as Gfx
-import qualified Graphics.UI.SDL.Rotozoomer as Gfx
--- containers
-import qualified Data.Map as Map
-import qualified Data.Set as Set
--- grid
-import qualified Math.Geometry.Grid as Grid
--- vector
-import qualified Data.Vector as V
--- mtl
-import qualified Control.Monad.State as State
-import qualified Control.Monad.RWS as RWS
--- array
-import qualified Data.Array as Array
--- safe
-import qualified Safe as Safe
 
 import GridLand.Import
 import GridLand.Data
+import GridLand.SDL
+import GridLand.Color
 
 newTodo :: Todo
 newTodo = Todo Map.empty Map.empty Map.empty (BkdColor White)
@@ -100,19 +91,6 @@ spriteOpts = noFilters ++ filters
  where
     noFilters = [(NoFilter, theta) | theta <- spriteDegrees]
     filters = [(cf c, theta) | cf <- [Tint, Replace], c <- [minBound..maxBound], theta <-  spriteDegrees]
-
-setColorKey :: (Word8, Word8, Word8) -> SDL.Surface -> IO SDL.Surface
-setColorKey (r, g, b) sur = mapRGB sur r g b >>= SDL.setColorKey sur [SDL.SrcColorKey] >> return sur
-
-mapRGB :: SDL.Surface -> Word8 -> Word8 -> Word8 -> IO SDL.Pixel
-mapRGB = SDL.mapRGB . SDL.surfaceGetPixelFormat
-
-colorToPixel :: Color -> SDL.Pixel
-colorToPixel color = let
-    (r',g,b') = colorValue color
-    (r,b) = (b',r')
-    v = shiftL 0xff (8 * 3)  .|. shiftL (fromIntegral b) (8 * 2) .|. shiftL (fromIntegral g) (8 * 1) .|. (fromIntegral r)
-    in SDL.Pixel v
 
 loadSpriteStretch :: FilePath -> Stretch -> GridLand a Sprite
 loadSpriteStretch rawPath stretch = do
@@ -158,16 +136,16 @@ mapFilterColor ARGB = filterColorARGB
 mapFilterColor ABGR = filterColorABGR
 
 filterColorABGR :: ColorFilter -> Word32 -> SDL.Pixel
-filterColorABGR = mkFilterColor toColorABGR32 fromColorABGR32 0xff000000
+filterColorABGR = mkFilterColor toColorABGR fromColorABGR 0xff000000
 
 filterColorARGB :: ColorFilter -> Word32 -> SDL.Pixel
-filterColorARGB = mkFilterColor toColorARGB32 fromColorARGB32 0xff000000
+filterColorARGB = mkFilterColor toColorARGB fromColorARGB 0xff000000
 
 filterColorRGBA :: ColorFilter -> Word32 -> SDL.Pixel
-filterColorRGBA = mkFilterColor toColorRGBA32 fromColorRGBA32 0x000000ff
+filterColorRGBA = mkFilterColor toColorRGBA fromColorRGBA 0x000000ff
 
 filterColorBGRA :: ColorFilter -> Word32 -> SDL.Pixel
-filterColorBGRA = mkFilterColor toColorBGRA32 fromColorBGRA32 0x000000ff
+filterColorBGRA = mkFilterColor toColorBGRA fromColorBGRA 0x000000ff
 
 mkFilterColor
     :: (Word8 -> Word8 -> Word8 -> Word32)
@@ -209,20 +187,6 @@ filterColor toColor fromColor white magenta trans (Replace color) v = let
         else p
 
 -- This is a necessary hack because the SDL bindings are insufficient
-surfacePixelFormat :: SDL.Surface -> IO PixelFormat
-surfacePixelFormat sur = do
-    let fmt = SDL.surfaceGetPixelFormat sur
-    rShift <- pixelFormatGetRShift fmt
-    bShift <- pixelFormatGetBShift fmt
-    gShift <- pixelFormatGetGShift fmt
-    aShift <- pixelFormatGetAShift fmt
-    return $ case (rShift, gShift, bShift, aShift) of
-        ( 0,  8, 16, 24) -> ABGR
-        (16,  8,  0, 24) -> ARGB
-        (24, 16,  8,  0) -> RGBA
-        ( 8, 16, 24,  0) -> BGRA
-        _ -> ABGR -- default
-
 correctPath :: FilePath -> GridLand a FilePath
 correctPath "" = RWS.gets (pathPrefix . fst)
 correctPath path =
@@ -234,63 +198,6 @@ correctPath path =
 
 loadSprite :: FilePath -> GridLand a Sprite
 loadSprite path = loadSpriteStretch path Pixelated
-
-copySurface :: SDL.Surface -> IO SDL.Surface
-copySurface sur = do
-    copy <- copyFromSurface sur
-    SDL.blitSurface sur Nothing copy Nothing
-    return copy
-
-copyFromSurface :: SDL.Surface -> IO SDL.Surface
-copyFromSurface sur = do
-    let fmt = SDL.surfaceGetPixelFormat sur
-    bpp <- fromIntegral `liftM` SDL.pixelFormatGetBitsPerPixel fmt
-    rMask <- pixelFormatGetRMask fmt
-    gMask <- pixelFormatGetGMask fmt
-    bMask <- pixelFormatGetBMask fmt
-    flags <- SDL.surfaceGetFlags sur
-    aMask <- if elem SDL.SrcColorKey flags then return 0 else pixelFormatGetAMask fmt
-    SDL.createRGBSurface [SDL.SWSurface] (SDL.surfaceGetWidth sur) (SDL.surfaceGetHeight sur) bpp rMask gMask bMask aMask
-
-pixelFormatGetBytes :: Storable a => Int -> SDL.PixelFormat -> IO a
-pixelFormatGetBytes offset fmt = withForeignPtr fmt (\ptr -> peekByteOff ptr offset)
-
-pixelFormatGetRShift, pixelFormatGetGShift, pixelFormatGetBShift, pixelFormatGetAShift :: SDL.PixelFormat -> IO Word8
--- 64 bit
-pixelFormatGetRShift = pixelFormatGetBytes 14
-pixelFormatGetGShift = pixelFormatGetBytes 15
-pixelFormatGetBShift = pixelFormatGetBytes 16
-pixelFormatGetAShift = pixelFormatGetBytes 17
-{- 32 bit
-pixelFormatGetRShift = pixelFormatGetBytes 10
-pixelFormatGetGShift = pixelFormatGetBytes 11
-pixelFormatGetBShift = pixelFormatGetBytes 12
-pixelFormatGetAShift = pixelFormatGetBytes 13
--}
-
-pixelFormatGetRMask, pixelFormatGetGMask, pixelFormatGetBMask, pixelFormatGetAMask :: SDL.PixelFormat -> IO Word32
--- 64 bit
-pixelFormatGetRMask = pixelFormatGetBytes 20
-pixelFormatGetGMask = pixelFormatGetBytes 24
-pixelFormatGetBMask = pixelFormatGetBytes 28
-pixelFormatGetAMask = pixelFormatGetBytes 32
-{- 32 bit
-pixelFormatGetRMask = pixelFormatGetBytes 16
-pixelFormatGetGMask = pixelFormatGetBytes 20
-pixelFormatGetBMask = pixelFormatGetBytes 24
-pixelFormatGetAMask = pixelFormatGetBytes 28
--}
-
-
-getPixel32 :: Int -> Int -> SDL.Surface -> IO SDL.Pixel
-getPixel32 x y s = do
-    pixels <- castPtr `liftM` SDL.surfaceGetPixels s
-    SDL.Pixel `liftM` peekElemOff pixels ((y * SDL.surfaceGetWidth s) + x)
-
-putPixel32 :: Int -> Int -> SDL.Pixel -> SDL.Surface -> IO ()
-putPixel32 x y (SDL.Pixel pixel) s = do
-    pixels <- castPtr `liftM` SDL.surfaceGetPixels s
-    pokeElemOff pixels ((y * SDL.surfaceGetWidth s) + x) pixel
 
 loadBackdropImageStretch :: FilePath -> Stretch -> GridLand a Backdrop
 loadBackdropImageStretch rawPath stretch = do
@@ -408,74 +315,6 @@ pressed = flip Key Pressed
 
 released :: Key -> Input
 released = flip Key Released
-
-fromColorARGB32 :: Word32 -> (Word8, Word8, Word8)
-fromColorARGB32 c =
-    (fromIntegral ((shiftR c (2 * 8)) .&. 0xff),
-     fromIntegral ((shiftR c 8) .&. 0xff),
-     fromIntegral (c .&. 0xff))
-
-fromColorABGR32 :: Word32 -> (Word8, Word8, Word8)
-fromColorABGR32 c =
-    (fromIntegral (c .&. 0xff),
-     fromIntegral ((shiftR c 8) .&. 0xff),
-     fromIntegral ((shiftR c (2 * 8)) .&. 0xff))
-
-fromColorRGBA32 :: Word32 -> (Word8, Word8, Word8)
-fromColorRGBA32 c =
-    (fromIntegral ((shiftR c (3 * 8)) .&. 0xff),
-     fromIntegral ((shiftR c (2 * 8)) .&. 0xff),
-     fromIntegral ((shiftR c 8) .&. 0xff))
-
-fromColorBGRA32 :: Word32 -> (Word8, Word8, Word8)
-fromColorBGRA32 c =
-    (fromIntegral ((shiftR c 8) .&. 0xff),
-     fromIntegral ((shiftR c (2 * 8)) .&. 0xff),
-     fromIntegral ((shiftR c (3 * 8)) .&. 0xff))
-
-toColorABGR32 :: Word8 -> Word8 -> Word8 -> Word32
-toColorABGR32 r g b =
-    shiftL 0xff (3 * 8) .|.
-    shiftL (fromIntegral b) (2 * 8) .|.
-    shiftL (fromIntegral g) 8 .|.
-    (fromIntegral r)
-
-toColorARGB32 :: Word8 -> Word8 -> Word8 -> Word32
-toColorARGB32 r g b =
-    shiftL 0xff (3 * 8) .|.
-    shiftL (fromIntegral r) (2 * 8) .|.
-    shiftL (fromIntegral g) 8 .|.
-    (fromIntegral b)
-
-toColorBGRA32 :: Word8 -> Word8 -> Word8 -> Word32
-toColorBGRA32 r g b =
-    shiftL (fromIntegral b) (3 * 8) .|.
-    shiftL (fromIntegral g) (2 * 8) .|.
-    shiftL (fromIntegral r) 8 .|.
-    0xff
-
-toColorRGBA32 :: Word8 -> Word8 -> Word8 -> Word32
-toColorRGBA32 r g b =
-    shiftL (fromIntegral r) (3 * 8) .|.
-    shiftL (fromIntegral g) (2 * 8) .|.
-    shiftL (fromIntegral b) 8 .|.
-    0xff
-
-colorValue :: Integral a => Color -> (a, a, a)
-colorValue = \case
-  Red -> (0xcc, 0x00, 0x00)
-  Orange -> (0xff, 0xa5, 0x00)
-  Yellow -> (0xff, 0xff, 0x00)
-  YellowGreen -> (0x7f, 0xff, 0x00)
-  Green -> (0x00, 0x66, 0x00)
-  LightBlue -> (0x66, 0xff, 0xff)
-  Blue -> (0x00, 0x00, 0x99)
-  Pink -> (0xff, 0x66, 0x99)
-  Black -> (0x00, 0x00, 0x00)
-  White -> (0xff, 0xff, 0xff)
-
-colorValue' :: Integral a => Color -> (a -> a -> a -> b) -> b
-colorValue' c f = uncurryN f (colorValue c)
 
 rotations, colors, withoutColors, withColors, totalFrames, colorAngleInterval:: Int
 rotations = 36
@@ -657,7 +496,7 @@ start Config{..} = do
 getColorMap :: SDL.Surface -> IO (Color -> SDL.Pixel)
 getColorMap s = do
     let fmt = SDL.surfaceGetPixelFormat s
-    pixels <- forM [minBound..maxBound] $ \c -> liftIO $ colorValue' c (SDL.mapRGB fmt)
+    pixels <- forM [minBound..maxBound] (\c -> liftIO $ colorValueCurry c (SDL.mapRGB fmt))
     let table = V.fromList pixels
     return $ \c -> table V.! (fromEnum c)
 
